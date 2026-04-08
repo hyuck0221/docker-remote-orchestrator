@@ -74,10 +74,12 @@ compose.desktop {
             packageName = "DRO"
             packageVersion = project.rootProject.properties["app.version"]?.toString() ?: "1.0.0"
             description = "DRO - Docker Remote Orchestrator"
+            modules("java.naming", "java.sql", "jdk.unsupported")
 
             macOS {
                 bundleID = "com.orchestrator.dro"
-                iconFile.set(project.file("build/generated/icons/icon.icns"))
+                val icnsFile = project.file("build/generated/icons/icon.icns")
+                if (icnsFile.exists()) iconFile.set(icnsFile)
                 entitlementsFile.set(project.file("entitlements.plist"))
                 infoPlist {
                     extraKeysRawXml = """
@@ -91,11 +93,13 @@ compose.desktop {
             }
 
             windows {
-                iconFile.set(project.file("build/generated/icons/icon.ico"))
+                val icoFile = project.file("build/generated/icons/icon.ico")
+                if (icoFile.exists()) iconFile.set(icoFile)
             }
 
             linux {
-                iconFile.set(project.file("build/generated/icons/icon.png"))
+                val pngFile = project.file("build/generated/icons/icon.png")
+                if (pngFile.exists()) iconFile.set(pngFile)
             }
         }
     }
