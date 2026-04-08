@@ -1,6 +1,14 @@
-# DRO - Docker Remote Orchestrator
+<p align="center">
+  <img src="desktop/src/main/resources/icons/icon.png" width="128" height="128" alt="Travel Plan Logo" />
+</p>
 
-여러 원격 머신의 Docker 컨테이너를 하나의 대시보드에서 관리하는 크로스 플랫폼 데스크톱 애플리케이션입니다.
+<h1 align="center">Docker Remote Orchestrator</h1>
+
+<p align="center">
+  여러 원격 머신의 Docker 컨테이너를 하나의 대시보드에서 관리하는 크로스 플랫폼 데스크톱 애플리케이션입니다.<br>
+</p>
+
+---
 
 [English](README.md)
 

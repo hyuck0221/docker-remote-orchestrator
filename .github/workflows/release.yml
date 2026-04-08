@@ -61,15 +61,10 @@ jobs:
           sed -i.bak "s/^app.version=.*/app.version=${{ steps.version.outputs.version }}/" gradle.properties
           cat gradle.properties
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Generate icon PNG
+      - name: Prepare icon
         run: |
-          pip install Pillow -q
-          python scripts/generate-icon.py desktop/build/generated/icons
+          mkdir -p desktop/build/generated/icons
+          cp desktop/src/main/resources/icons/icon.png desktop/build/generated/icons/icon.png
         shell: bash
 
       - name: Convert icon to platform format (macOS)
@@ -136,19 +131,40 @@ jobs:
           Write-Host "Generated icon.ico"
         shell: pwsh
 
-      - name: Build distribution
-        run: ./gradlew :desktop:${{ matrix.task }} --no-daemon --stacktrace
+      - name: Build app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: ./gradlew :desktop:createDistributable --no-daemon --stacktrace
         shell: bash
 
-      - name: Ad-hoc codesign (macOS)
+      - name: Codesign with entitlements (macOS)
         if: runner.os == 'macOS'
         run: |
-          APP_PATH=$(find desktop/build/compose/binaries -name "*.app" -type d | head -1)
-          if [ -n "$APP_PATH" ]; then
-            echo "Signing: $APP_PATH"
-            codesign --force --deep --sign - "$APP_PATH"
-            echo "Signing complete"
-          fi
+          APP_PATH=$(find desktop/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+          echo "Signing: $APP_PATH"
+          # Sign all nested frameworks/dylibs first
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.jnilib" \) -exec codesign --force --sign - {} \;
+          find "$APP_PATH/Contents/runtime" -type f -name "java" -exec codesign --force --sign - --entitlements desktop/entitlements.plist {} \;
+          # Sign the main app bundle
+          codesign --force --deep --sign - --entitlements desktop/entitlements.plist "$APP_PATH"
+          echo "Signing complete"
+          codesign --verify --verbose "$APP_PATH" || echo "Verification note: ad-hoc signed"
+        shell: bash
+
+      - name: Create DMG (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP_PATH=$(find desktop/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+          APP_NAME=$(basename "$APP_PATH" .app)
+          DMG_DIR=desktop/build/compose/binaries/main/dmg
+          mkdir -p "$DMG_DIR"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_DIR/${APP_NAME}-${{ steps.version.outputs.version }}.dmg"
+          echo "DMG created:"
+          ls -la "$DMG_DIR/"
+        shell: bash
+
+      - name: Build distribution (Windows)
+        if: runner.os == 'Windows'
+        run: ./gradlew :desktop:${{ matrix.task }} --no-daemon --stacktrace
         shell: bash
 
       - name: Find and rename artifact
@@ -156,11 +172,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find desktop/build/compose/binaries -name "*.${{ matrix.ext }}" -type f | while read f; do
+          find desktop/build/compose/binaries -name "*.dmg" -o -name "*.msi" -o -name "*.deb" | while read f; do
             filename=$(basename "$f")
             name="${filename%.*}"
-            cp "$f" "dist/${name}-${{ matrix.platform }}.${{ matrix.ext }}"
-            echo "Found: $f -> dist/${name}-${{ matrix.platform }}.${{ matrix.ext }}"
+            ext="${filename##*.}"
+            cp "$f" "dist/${name}-${{ matrix.platform }}.${ext}"
+            echo "Found: $f -> dist/${name}-${{ matrix.platform }}.${ext}"
           done
           ls -la dist/
 

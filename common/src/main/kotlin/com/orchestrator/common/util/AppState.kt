@@ -10,14 +10,21 @@ import java.io.File
 data class AppState(
     val role: String = "NONE",  // NONE, HOST, CLIENT
     val hostConfig: HostConfig? = null,
-    val clientConfig: ClientConfig? = null
+    val clientConfig: ClientConfig? = null,
+    val userSettings: UserSettings = UserSettings()
+)
+
+@Serializable
+data class UserSettings(
+    val displayName: String = ""
 )
 
 @Serializable
 data class HostConfig(
     val port: Int = 9090,
     val hostCode: String = "",
-    val enableTls: Boolean = false
+    val enableTls: Boolean = false,
+    val enableNgrok: Boolean = false
 )
 
 @Serializable
@@ -59,6 +66,16 @@ object AppStateManager {
     }
 
     fun clear() {
-        save(AppState())
+        val current = load()
+        save(AppState(userSettings = current.userSettings))
+    }
+
+    fun saveUserSettings(settings: UserSettings) {
+        val current = load()
+        save(current.copy(userSettings = settings))
+    }
+
+    fun loadUserSettings(): UserSettings {
+        return load().userSettings
     }
 }

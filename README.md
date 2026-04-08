@@ -1,6 +1,14 @@
-# DRO - Docker Remote Orchestrator
+<p align="center">
+  <img src="desktop/src/main/resources/icons/icon.png" width="128" height="128" alt="Travel Plan Logo" />
+</p>
 
-A cross-platform desktop application for managing Docker containers across multiple remote machines from a single dashboard.
+<h1 align="center">Docker Remote Orchestrator</h1>
+
+<p align="center">
+  A cross-platform desktop application for managing Docker containers across multiple remote machines from a single dashboard.<br>
+</p>
+
+---
 
 [한국어](README_KO.md)
 

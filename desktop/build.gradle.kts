@@ -40,7 +40,9 @@ dependencies {
 
 // Generate version file for runtime access
 val generateVersionFile by tasks.registering {
+    val versionValue = project.rootProject.properties["app.version"]?.toString() ?: "1.0.0"
     val outputDir = layout.buildDirectory.dir("generated/version")
+    inputs.property("appVersion", versionValue)
     outputs.dir(outputDir)
     doLast {
         val dir = outputDir.get().asFile.resolve("com/orchestrator/desktop")
@@ -48,7 +50,7 @@ val generateVersionFile by tasks.registering {
         dir.resolve("BuildVersion.kt").writeText("""
             package com.orchestrator.desktop
             object BuildVersion {
-                const val VERSION = "${project.rootProject.properties["app.version"] ?: "1.0.0"}"
+                const val VERSION = "$versionValue"
             }
         """.trimIndent())
     }

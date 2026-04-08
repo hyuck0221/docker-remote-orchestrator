@@ -57,7 +57,8 @@ sealed class WsMessage {
     data class ContainerCommand(
         val commandId: String,
         val containerId: String,
-        val action: ContainerAction
+        val action: ContainerAction,
+        val targetNodeId: String? = null
     ) : WsMessage()
 
     @Serializable

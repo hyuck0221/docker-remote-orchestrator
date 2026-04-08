@@ -62,19 +62,8 @@ class ClientMessageHandler(
     }
 
     private fun handleContainerCommand(command: WsMessage.ContainerCommand) {
-        if (permissionManager.currentPermission.value != Permission.FULL_CONTROL) {
-            logger.warn("Ignoring command - permission is ${permissionManager.currentPermission.value}")
-            scope.launch {
-                onSendMessage(WsMessage.CommandResult(
-                    nodeId = "",
-                    commandId = command.commandId,
-                    success = false,
-                    message = "Permission denied"
-                ))
-            }
-            return
-        }
-
+        // Commands from the host server are always honored - the host is the authority
+        logger.info("Executing command: ${command.action} on container ${command.containerId}")
         scope.launch {
             val result = commandExecutor.execute(command.containerId, command.action)
             onSendMessage(WsMessage.CommandResult(

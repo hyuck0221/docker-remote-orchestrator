@@ -2,6 +2,7 @@ package com.orchestrator.client.network
 
 import com.orchestrator.common.protocol.WsMessage
 import com.orchestrator.common.security.TlsCertificateGenerator
+import com.orchestrator.common.tunnel.NgrokTunnel
 import com.orchestrator.common.util.AppJson
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -33,11 +34,13 @@ class HostConnection(
     private var wsSession: WebSocketSession? = null
     private var connectionJob: Job? = null
     private val httpClient = HttpClient(CIO) {
-        install(WebSockets)
+        install(WebSockets) {
+            pingIntervalMillis = 10_000
+        }
         engine {
+            requestTimeout = 60_000
             https {
                 if (useTls) {
-                    // Trust self-signed certificates
                     trustManager = object : javax.net.ssl.X509TrustManager {
                         override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
                         override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
@@ -52,8 +55,47 @@ class HostConnection(
         connectionJob?.cancel()
         connectionJob = scope.launch {
             var backoff = initialBackoffMs
-            val scheme = if (useTls) "wss" else "ws"
-            logger.info("Connecting via $scheme to $host:$port")
+
+            // Auto-detect ngrok URLs and use TLS
+            val isNgrok = NgrokTunnel.isNgrokUrl(host)
+            val actualHost: String
+            val actualPort: Int
+            val actualTls: Boolean
+
+            if (isNgrok) {
+                val (h, p, tls) = NgrokTunnel.parseUrl(host)
+                actualHost = h
+                actualPort = p
+                actualTls = tls
+            } else {
+                actualHost = host
+                actualPort = port
+                actualTls = useTls
+            }
+
+            val scheme = if (actualTls) "wss" else "ws"
+            logger.info("Connecting via $scheme to $actualHost:$actualPort${if (isNgrok) " (ngrok)" else ""}")
+
+            // Create a TLS-capable client if needed (ngrok requires wss)
+            val client = if (actualTls && !useTls) {
+                HttpClient(CIO) {
+                    install(WebSockets) {
+                        pingIntervalMillis = 10_000
+                    }
+                    engine {
+                        requestTimeout = 0 // no timeout for long-lived WebSocket
+                        https {
+                            trustManager = object : javax.net.ssl.X509TrustManager {
+                                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                            }
+                        }
+                    }
+                }
+            } else {
+                httpClient
+            }
 
             while (isActive) {
                 _connectionState.value = if (backoff == initialBackoffMs) {
@@ -67,13 +109,16 @@ class HostConnection(
                         wsSession = this
                         _connectionState.value = ConnectionState.CONNECTED
                         backoff = initialBackoffMs
-                        logger.info("Connected to server $host:$port ($scheme)")
+                        logger.info("Connected to server $actualHost:$actualPort ($scheme)")
 
                         for (frame in incoming) {
                             when (frame) {
                                 is Frame.Text -> {
                                     val text = frame.readText()
                                     clientMessageHandler.handleMessage(text)
+                                }
+                                is Frame.Ping -> {
+                                    send(Frame.Pong(frame.data))
                                 }
                                 is Frame.Close -> {
                                     logger.info("Server closed connection")
@@ -84,10 +129,15 @@ class HostConnection(
                         }
                     }
 
-                    if (useTls) {
-                        httpClient.wss(host = host, port = port, path = "/ws/node", block = block)
+                    if (actualTls) {
+                        client.wss(host = actualHost, port = actualPort, path = "/ws/node", request = {
+                            if (isNgrok) {
+                                headers.append("ngrok-skip-browser-warning", "true")
+                                headers.append("User-Agent", "DRO-Client")
+                            }
+                        }, block = block)
                     } else {
-                        httpClient.webSocket(host = host, port = port, path = "/ws/node", block = block)
+                        client.webSocket(host = actualHost, port = actualPort, path = "/ws/node", block = block)
                     }
                 } catch (e: CancellationException) {
                     throw e

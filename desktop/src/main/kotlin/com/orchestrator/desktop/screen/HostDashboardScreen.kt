@@ -17,6 +17,7 @@ import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.ContainerStatus
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
+import com.orchestrator.common.tunnel.TunnelState
 import com.orchestrator.desktop.component.*
 import com.orchestrator.desktop.theme.*
 import com.orchestrator.desktop.viewmodel.AppViewModel
@@ -29,6 +30,9 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
     val processing by viewModel.processingContainers.collectAsState()
     val logOutput by viewModel.logOutput.collectAsState()
     val logName by viewModel.logContainerName.collectAsState()
+    val tunnelState by viewModel.tunnelState.collectAsState()
+    val tunnelUrl by viewModel.tunnelUrl.collectAsState()
+    val tunnelError by viewModel.tunnelError.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
 
     val hostNode = connectedNodes.entries.firstOrNull { it.key.startsWith("host-") }
@@ -64,6 +68,49 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                             }
                         }
                         LaunchedEffect(codeCopied) { if (codeCopied) { kotlinx.coroutines.delay(2000); codeCopied = false } }
+
+                        // Ngrok tunnel URL
+                        if (tunnelState != TunnelState.STOPPED) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            var urlCopied by remember { mutableStateOf(false) }
+                            val tunnelColor = when (tunnelState) {
+                                TunnelState.RUNNING -> AccentTeal
+                                TunnelState.STARTING -> StatusPaused
+                                TunnelState.ERROR -> StatusExited
+                                TunnelState.STOPPED -> TextMuted
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = tunnelColor.copy(alpha = 0.08f),
+                                onClick = {
+                                    tunnelUrl?.let { url ->
+                                        java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                                            .setContents(java.awt.datatransfer.StringSelection(url), null)
+                                        urlCopied = true
+                                    }
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        when {
+                                            urlCopied -> "COPIED"
+                                            tunnelState == TunnelState.STARTING -> "TUNNEL..."
+                                            tunnelState == TunnelState.ERROR -> tunnelError?.take(30) ?: "ERROR"
+                                            else -> tunnelUrl?.removePrefix("https://") ?: ""
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = tunnelColor,
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            LaunchedEffect(urlCopied) { if (urlCopied) { kotlinx.coroutines.delay(2000); urlCopied = false } }
+                        }
 
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(shape = RoundedCornerShape(6.dp), color = StatusRunning.copy(alpha = 0.08f)) {
