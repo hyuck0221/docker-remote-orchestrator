@@ -18,14 +18,17 @@ jobs:
             platform: macos-arm64
             task: packageDmg
             ext: dmg
-          - os: macos-13
+            java-arch: aarch64
+          - os: macos-latest
             platform: macos-x64
             task: packageDmg
             ext: dmg
+            java-arch: x64
           - os: windows-latest
             platform: windows-x64
             task: packageMsi
             ext: msi
+            java-arch: x64
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.platform }})
@@ -38,6 +41,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          architecture: ${{ matrix.java-arch }}
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
