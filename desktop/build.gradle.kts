@@ -69,12 +69,31 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb
             )
-            packageName = "DockerRemoteOrchestrator"
+            packageName = "DRO"
             packageVersion = project.rootProject.properties["app.version"]?.toString() ?: "1.0.0"
-            description = "Docker Remote Orchestrator Desktop"
+            description = "DRO - Docker Remote Orchestrator"
 
             macOS {
-                bundleID = "com.orchestrator.desktop"
+                bundleID = "com.orchestrator.dro"
+                iconFile.set(project.file("build/generated/icons/icon.icns"))
+                entitlementsFile.set(project.file("entitlements.plist"))
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSAppTransportSecurity</key>
+                        <dict>
+                            <key>NSAllowsArbitraryLoads</key>
+                            <true/>
+                        </dict>
+                    """
+                }
+            }
+
+            windows {
+                iconFile.set(project.file("build/generated/icons/icon.ico"))
+            }
+
+            linux {
+                iconFile.set(project.file("build/generated/icons/icon.png"))
             }
         }
     }

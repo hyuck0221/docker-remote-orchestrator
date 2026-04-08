@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -30,7 +31,8 @@ fun main() = application {
 
     Window(
         onCloseRequest = ::exitApplication,
-        title = "Docker Remote Orchestrator v$currentVersion",
+        title = "DRO v$currentVersion",
+        icon = painterResource("icons/icon.png"),
         state = rememberWindowState(width = 960.dp, height = 700.dp)
     ) {
         AppTheme {

@@ -13,7 +13,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "docker-remote-orchestrator"
+rootProject.name = "dro"
 
 include(":common")
 include(":server")

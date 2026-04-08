@@ -16,7 +16,7 @@ import java.util.UUID
 fun main(args: Array<String>) = runBlocking {
     val logger = LoggerFactory.getLogger("ClientMain")
 
-    logger.info("=== Docker Remote Orchestrator Client ===")
+    logger.info("=== DRO Client ===")
 
     // Parse arguments
     val useTls = args.contains("--tls")

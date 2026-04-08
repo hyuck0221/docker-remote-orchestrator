@@ -123,7 +123,7 @@ fun main(args: Array<String>) {
     }
 
     val hostCode = hostCodeManager.generateCode()
-    logger.info("=== Docker Remote Orchestrator Server ===")
+    logger.info("=== DRO Server ===")
     logger.info("Host Code: $hostCode")
 
     fun Application.configureServer() {
@@ -138,7 +138,7 @@ fun main(args: Array<String>) {
 
         routing {
             get("/") {
-                call.respondText("Docker Remote Orchestrator Server - Host Code: $hostCode")
+                call.respondText("DRO Server - Host Code: $hostCode")
             }
             get("/health") {
                 call.respondText("OK")
