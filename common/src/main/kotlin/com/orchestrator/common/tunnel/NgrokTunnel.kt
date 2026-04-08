@@ -43,12 +43,8 @@ class NgrokTunnel {
 
         scope.launch(Dispatchers.IO) {
             try {
-                // Check if ngrok is installed
-                val checkProcess = ProcessBuilder("ngrok", "version")
-                    .redirectErrorStream(true)
-                    .start()
-                val exitCode = checkProcess.waitFor()
-                if (exitCode != 0) {
+                val binary = getNgrokBinary()
+                if (binary == null) {
                     _state.value = TunnelState.ERROR
                     _errorMessage.value = "ngrok not found. Install from https://ngrok.com"
                     return@launch
@@ -62,16 +58,13 @@ class NgrokTunnel {
                     conn.readTimeout = 1000
                     conn.responseCode
                     conn.disconnect()
-                    // If we get here, ngrok is already running - kill it
-                    ProcessBuilder("ngrok", "http", "--log=stdout", "0")
+                    ProcessBuilder(binary, "http", "--log=stdout", "0")
                         .start().destroyForcibly()
                     delay(500)
-                } catch (_: Exception) {
-                    // No existing ngrok - good
-                }
+                } catch (_: Exception) {}
 
                 // Start ngrok
-                val pb = ProcessBuilder("ngrok", "http", port.toString())
+                val pb = ProcessBuilder(binary, "http", port.toString())
                     .redirectErrorStream(true)
                 pb.environment()["NGROK_LOG"] = "stdout"
                 process = pb.start()
@@ -161,18 +154,48 @@ class NgrokTunnel {
     companion object {
         private val logger = LoggerFactory.getLogger(NgrokTunnel::class.java)
 
-        fun checkStatus(): NgrokStatus {
-            // Check if ngrok is installed
+        private fun findNgrokPath(): String? {
+            // Try direct command first
             try {
-                val process = ProcessBuilder("ngrok", "version")
-                    .redirectErrorStream(true)
-                    .start()
-                val output = process.inputStream.bufferedReader().readText()
-                val exitCode = process.waitFor()
-                if (exitCode != 0) return NgrokStatus.NOT_INSTALLED
-            } catch (_: Exception) {
-                return NgrokStatus.NOT_INSTALLED
+                val p = ProcessBuilder("ngrok", "version").redirectErrorStream(true).start()
+                if (p.waitFor() == 0) return "ngrok"
+            } catch (_: Exception) {}
+
+            // Search common installation paths
+            val os = System.getProperty("os.name", "").lowercase()
+            val candidates = when {
+                os.contains("mac") || os.contains("darwin") -> listOf(
+                    "/opt/homebrew/bin/ngrok",
+                    "/usr/local/bin/ngrok",
+                    "${System.getProperty("user.home")}/bin/ngrok",
+                    "${System.getProperty("user.home")}/.ngrok/ngrok"
+                )
+                os.contains("win") -> listOf(
+                    "${System.getenv("LOCALAPPDATA")}\\ngrok\\ngrok.exe",
+                    "${System.getenv("ProgramFiles")}\\ngrok\\ngrok.exe",
+                    "C:\\ngrok\\ngrok.exe"
+                )
+                else -> listOf(
+                    "/usr/local/bin/ngrok",
+                    "/snap/bin/ngrok",
+                    "${System.getProperty("user.home")}/bin/ngrok"
+                )
             }
+            for (path in candidates) {
+                if (java.io.File(path).exists()) return path
+            }
+            return null
+        }
+
+        internal var ngrokBinary: String? = null
+
+        private fun getNgrokBinary(): String? {
+            if (ngrokBinary == null) ngrokBinary = findNgrokPath()
+            return ngrokBinary
+        }
+
+        fun checkStatus(): NgrokStatus {
+            val binary = getNgrokBinary() ?: return NgrokStatus.NOT_INSTALLED
 
             // Check if authtoken is configured
             try {
@@ -197,8 +220,9 @@ class NgrokTunnel {
         }
 
         fun setAuthToken(token: String): Boolean {
+            val binary = getNgrokBinary() ?: return false
             return try {
-                val process = ProcessBuilder("ngrok", "config", "add-authtoken", token)
+                val process = ProcessBuilder(binary, "config", "add-authtoken", token)
                     .redirectErrorStream(true)
                     .start()
                 val output = process.inputStream.bufferedReader().readText()

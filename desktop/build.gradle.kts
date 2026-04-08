@@ -74,7 +74,7 @@ compose.desktop {
             packageName = "DRO"
             packageVersion = project.rootProject.properties["app.version"]?.toString() ?: "1.0.0"
             description = "DRO - Docker Remote Orchestrator"
-            modules("java.naming", "java.sql", "jdk.unsupported")
+            includeAllModules = true
 
             macOS {
                 bundleID = "com.orchestrator.dro"
