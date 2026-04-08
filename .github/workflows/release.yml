@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos-arm64
+            task: packageDmg
+            artifact: "desktop/build/compose/binaries/main/dmg/*.dmg"
+          - os: macos-13
+            platform: macos-x64
+            task: packageDmg
+            artifact: "desktop/build/compose/binaries/main/dmg/*.dmg"
+          - os: windows-latest
+            platform: windows-x64
+            task: packageMsi
+            artifact: "desktop/build/compose/binaries/main/msi/*.msi"
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.platform }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Set version in gradle.properties
+        shell: bash
+        run: |
+          sed -i.bak "s/^app.version=.*/app.version=${{ steps.version.outputs.version }}/" gradle.properties
+
+      - name: Build distribution
+        run: ./gradlew :desktop:${{ matrix.task }}
+
+      - name: Rename artifact with platform
+        shell: bash
+        run: |
+          mkdir -p dist
+          for f in ${{ matrix.artifact }}; do
+            filename=$(basename "$f")
+            extension="${filename##*.}"
+            name="${filename%.*}"
+            cp "$f" "dist/${name}-${{ matrix.platform }}.${extension}"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Create Release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | head -20
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.version.outputs.version }}"
+          body: |
+            ## Docker Remote Orchestrator v${{ steps.version.outputs.version }}
+
+            ### Downloads
+            | Platform | File |
+            |----------|------|
+            | macOS (Apple Silicon) | `*-macos-arm64.dmg` |
+            | macOS (Intel) | `*-macos-x64.dmg` |
+            | Windows | `*-windows-x64.msi` |
+
+            ### Changes
+            See [commit history](https://github.com/${{ github.repository }}/commits/v${{ steps.version.outputs.version }}) for details.
+          files: artifacts/*
+          draft: false
+          prerelease: false
