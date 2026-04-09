@@ -17,7 +17,8 @@ data class AppState(
 @Serializable
 data class UserSettings(
     val displayName: String = "",
-    val autoStart: Boolean = false
+    val autoStart: Boolean = false,
+    val language: String = "EN"
 )
 
 @Serializable

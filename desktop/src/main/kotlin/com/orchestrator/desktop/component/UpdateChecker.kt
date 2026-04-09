@@ -8,6 +8,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -26,6 +27,7 @@ fun UpdateBanner(
     githubRepo: String,
     scope: CoroutineScope
 ) {
+    val s = LocalStrings.current
     var latestVersion by remember { mutableStateOf<String?>(null) }
     var downloadUrl by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
@@ -51,7 +53,7 @@ fun UpdateBanner(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Update available: v$latestVersion",
+                    s.updateAvailable(latestVersion!!),
                     style = MaterialTheme.typography.labelMedium,
                     color = AccentBlue,
                     fontWeight = FontWeight.Medium,
@@ -68,14 +70,14 @@ fun UpdateBanner(
                     },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    Text("Download", style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                    Text(s.download, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
                 }
 
                 TextButton(
                     onClick = { dismissed = true },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Text("Dismiss", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                    Text(s.dismiss, style = MaterialTheme.typography.labelSmall, color = TextMuted)
                 }
             }
         }

@@ -17,6 +17,7 @@ import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.DeployConfig
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.protocol.DeployMode
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 
 @Composable
@@ -29,6 +30,7 @@ fun GroupDeployDialog(
     onDeploy: (targetNodeIds: List<String>, configs: List<DeployConfig>, mode: DeployMode) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val s = LocalStrings.current
     var selectedMode by remember { mutableStateOf(DeployMode.INSTANT) }
     val selectedNodes = remember { mutableStateMapOf<String, Boolean>() }
 
@@ -42,7 +44,7 @@ fun GroupDeployDialog(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
-                    "Deploy Group",
+                    s.deployGroup,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -57,7 +59,7 @@ fun GroupDeployDialog(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Project", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                            Text(s.project, style = MaterialTheme.typography.labelSmall, color = TextMuted)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 projectName,
@@ -68,7 +70,7 @@ fun GroupDeployDialog(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            "${containers.size} container(s)",
+                            s.containersCount(containers.size),
                             style = MaterialTheme.typography.labelSmall,
                             color = TextMuted
                         )
@@ -87,21 +89,21 @@ fun GroupDeployDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Deploy mode
-                Text("Deploy Mode", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                Text(s.deployMode, style = MaterialTheme.typography.labelMedium, color = TextMuted)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModeChip("Instant", selectedMode == DeployMode.INSTANT) { selectedMode = DeployMode.INSTANT }
-                    ModeChip("Approval", selectedMode == DeployMode.APPROVAL) { selectedMode = DeployMode.APPROVAL }
+                    ModeChip(s.instant, selectedMode == DeployMode.INSTANT) { selectedMode = DeployMode.INSTANT }
+                    ModeChip(s.approval, selectedMode == DeployMode.APPROVAL) { selectedMode = DeployMode.APPROVAL }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Target nodes
-                Text("Target Nodes", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                Text(s.targetNodes, style = MaterialTheme.typography.labelMedium, color = TextMuted)
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (deployableNodes.isEmpty()) {
-                    Text("No remote nodes connected", style = MaterialTheme.typography.bodySmall, color = TextMuted)
+                    Text(s.noRemoteNodes, style = MaterialTheme.typography.bodySmall, color = TextMuted)
                 } else {
                     LazyColumn(modifier = Modifier.heightIn(max = 150.dp)) {
                         items(deployableNodes.entries.toList()) { (nodeId, nodeInfo) ->
@@ -134,7 +136,7 @@ fun GroupDeployDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = TextMuted)
+                        Text(s.cancel, color = TextMuted)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     val hasTargets = selectedNodes.any { it.value }
@@ -161,7 +163,7 @@ fun GroupDeployDialog(
                         enabled = hasTargets,
                         colors = ButtonDefaults.buttonColors(containerColor = AccentTeal)
                     ) {
-                        Text("Deploy All (${containers.size})", color = Surface0)
+                        Text(s.deployAll(containers.size), color = Surface0)
                     }
                 }
             }

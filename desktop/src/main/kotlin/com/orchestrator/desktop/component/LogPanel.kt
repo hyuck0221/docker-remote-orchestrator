@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 
 @Composable
@@ -23,6 +24,7 @@ fun LogPanel(
     expanded: Boolean = false,
     onToggleExpand: (() -> Unit)? = null
 ) {
+    val s = LocalStrings.current
     val scrollState = rememberScrollState()
 
     LaunchedEffect(output.size) {
@@ -47,7 +49,7 @@ fun LogPanel(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Logs: $containerName",
+                        text = s.logsFor(containerName),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontFamily = FontFamily.Monospace,
@@ -75,7 +77,7 @@ fun LogPanel(
                         onClick = onClose,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
-                        Text("Close", style = MaterialTheme.typography.labelSmall, color = StatusExited)
+                        Text(s.close, style = MaterialTheme.typography.labelSmall, color = StatusExited)
                     }
                 }
             }

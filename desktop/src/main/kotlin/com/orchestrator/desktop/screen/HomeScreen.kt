@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orchestrator.common.tunnel.NgrokStatus
 import com.orchestrator.common.tunnel.NgrokTunnel
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import com.orchestrator.desktop.viewmodel.AppRole
 import com.orchestrator.desktop.viewmodel.AppScreen
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(viewModel: AppViewModel) {
+    val s = LocalStrings.current
     var showHostDialog by remember { mutableStateOf(false) }
     var showClientDialog by remember { mutableStateOf(false) }
     val statusMessage by viewModel.statusMessage.collectAsState()
@@ -37,7 +39,7 @@ fun HomeScreen(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Docker Remote\nOrchestrator",
+                text = s.appTitle,
                 style = MaterialTheme.typography.headlineLarge,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onBackground
@@ -46,7 +48,7 @@ fun HomeScreen(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Manage containers across your network",
+                text = s.appSubtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSubtle,
                 textAlign = TextAlign.Center
@@ -78,7 +80,7 @@ fun HomeScreen(viewModel: AppViewModel) {
                 colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
             ) {
                 Text(
-                    "Start as Host",
+                    s.startAsHost,
                     style = MaterialTheme.typography.labelLarge,
                     color = Surface0
                 )
@@ -95,7 +97,7 @@ fun HomeScreen(viewModel: AppViewModel) {
                 )
             ) {
                 Text(
-                    "Join as Client",
+                    s.joinAsClient,
                     style = MaterialTheme.typography.labelLarge,
                     color = AccentTeal
                 )
@@ -115,12 +117,12 @@ fun HomeScreen(viewModel: AppViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Host Server Running", style = MaterialTheme.typography.labelMedium, color = StatusRunning, fontWeight = FontWeight.SemiBold)
-                            Text("Code: $hostCode  \u00B7  ${connectedNodes.size} node(s)", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                            Text(s.hostServerRunning, style = MaterialTheme.typography.labelMedium, color = StatusRunning, fontWeight = FontWeight.SemiBold)
+                            Text(s.hostCodeNodes(hostCode, connectedNodes.size), style = MaterialTheme.typography.bodySmall, color = TextSubtle)
                         }
                         // Open dashboard
                         TextButton(onClick = { viewModel.navigateTo(AppScreen.HOST_DASHBOARD) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text("Open", style = MaterialTheme.typography.labelMedium, color = AccentBlue)
+                            Text(s.open, style = MaterialTheme.typography.labelMedium, color = AccentBlue)
                         }
                         // Stop button
                         Surface(
@@ -148,11 +150,11 @@ fun HomeScreen(viewModel: AppViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Connected as Client", style = MaterialTheme.typography.labelMedium, color = AccentTeal, fontWeight = FontWeight.SemiBold)
-                            Text("Status: ${connectionState.name}", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                            Text(s.connectedAsClient, style = MaterialTheme.typography.labelMedium, color = AccentTeal, fontWeight = FontWeight.SemiBold)
+                            Text(s.statusLabel(connectionState.name), style = MaterialTheme.typography.bodySmall, color = TextSubtle)
                         }
                         TextButton(onClick = { viewModel.navigateTo(AppScreen.CLIENT_CONNECT) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text("Open", style = MaterialTheme.typography.labelMedium, color = AccentBlue)
+                            Text(s.open, style = MaterialTheme.typography.labelMedium, color = AccentBlue)
                         }
                         Surface(
                             modifier = Modifier.size(28.dp),
@@ -174,7 +176,7 @@ fun HomeScreen(viewModel: AppViewModel) {
 
     if (showHostDialog) {
         MinimalDialog(
-            title = "Start Host",
+            title = s.startHost,
             onDismiss = { showHostDialog = false }
         ) {
             var port by remember { mutableStateOf("9090") }
@@ -191,7 +193,7 @@ fun HomeScreen(viewModel: AppViewModel) {
             OutlinedTextField(
                 value = port,
                 onValueChange = { port = it.filter { c -> c.isDigit() } },
-                label = { Text("Port") },
+                label = { Text(s.port) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -202,25 +204,25 @@ fun HomeScreen(viewModel: AppViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("External Access (ngrok)", style = MaterialTheme.typography.bodyMedium)
+                    Text(s.externalAccess, style = MaterialTheme.typography.bodyMedium)
                     when (ngrokStatus) {
                         NgrokStatus.READY -> Text(
-                            "Allow connections from outside your network",
+                            s.allowExternalConnections,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSubtle
                         )
                         NgrokStatus.NOT_INSTALLED -> Text(
-                            "ngrok not installed",
+                            s.ngrokNotInstalled,
                             style = MaterialTheme.typography.bodySmall,
                             color = StatusExited
                         )
                         NgrokStatus.NOT_CONFIGURED -> Text(
-                            "ngrok auth token not set",
+                            s.ngrokNotConfigured,
                             style = MaterialTheme.typography.bodySmall,
                             color = StatusPaused
                         )
                         null -> Text(
-                            "Checking ngrok...",
+                            s.checkingNgrok,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSubtle
                         )
@@ -232,7 +234,7 @@ fun HomeScreen(viewModel: AppViewModel) {
                     TextButton(
                         onClick = { showNgrokSetup = true },
                         enabled = ngrokStatus != null
-                    ) { Text("Setup", style = MaterialTheme.typography.labelMedium, color = AccentBlue) }
+                    ) { Text(s.setup, style = MaterialTheme.typography.labelMedium, color = AccentBlue) }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -243,7 +245,7 @@ fun HomeScreen(viewModel: AppViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 shape = RoundedCornerShape(8.dp)
-            ) { Text("Start") }
+            ) { Text(s.start) }
         }
     }
 
@@ -256,7 +258,7 @@ fun HomeScreen(viewModel: AppViewModel) {
 
     if (showClientDialog) {
         MinimalDialog(
-            title = "Connect to Host",
+            title = s.connectToHost,
             onDismiss = { showClientDialog = false }
         ) {
             var host by remember { mutableStateOf("localhost") }
@@ -266,14 +268,14 @@ fun HomeScreen(viewModel: AppViewModel) {
 
             OutlinedTextField(
                 value = host, onValueChange = { host = it.trim() },
-                label = { Text(if (isNgrok) "ngrok URL" else "Address") },
-                placeholder = { Text("localhost or xxxx.ngrok-free.app") },
+                label = { Text(if (isNgrok) s.ngrokUrl else s.address) },
+                placeholder = { Text(s.addressPlaceholder) },
                 singleLine = true, modifier = Modifier.fillMaxWidth()
             )
             if (isNgrok) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "ngrok detected - port will be set automatically",
+                    s.ngrokDetected,
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSubtle
                 )
@@ -281,13 +283,13 @@ fun HomeScreen(viewModel: AppViewModel) {
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = port, onValueChange = { port = it.filter { c -> c.isDigit() } },
-                    label = { Text("Port") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    label = { Text(s.port) }, singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = code, onValueChange = { code = it.uppercase().take(8) },
-                label = { Text("Host Code") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = { Text(s.hostCode) }, singleLine = true, modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(16.dp))
             Button(
@@ -299,13 +301,14 @@ fun HomeScreen(viewModel: AppViewModel) {
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = code.length == 8
-            ) { Text("Connect") }
+            ) { Text(s.connect) }
         }
     }
 }
 
 @Composable
 private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
+    val s = LocalStrings.current
     var ngrokStatus by remember { mutableStateOf<NgrokStatus?>(null) }
     var authToken by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
@@ -319,14 +322,14 @@ private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ngrok Setup", style = MaterialTheme.typography.headlineSmall) },
+        title = { Text(s.ngrokSetup, style = MaterialTheme.typography.headlineSmall) },
         text = {
             Column {
                 when (ngrokStatus) {
                     NgrokStatus.NOT_INSTALLED -> {
-                        Text("ngrok is not installed.", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.ngrokNotInstalledDesc, style = MaterialTheme.typography.bodyMedium)
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("Install steps:", style = MaterialTheme.typography.labelLarge)
+                        Text(s.installSteps, style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(8.dp))
 
                         val osName = System.getProperty("os.name", "").lowercase()
@@ -351,23 +354,23 @@ private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "Or download from https://ngrok.com/download",
+                            s.orDownloadFrom,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSubtle
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "After installing, reopen this dialog.",
+                            s.afterInstallingReopen,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSubtle
                         )
                     }
 
                     NgrokStatus.NOT_CONFIGURED -> {
-                        Text("ngrok is installed but needs an auth token.", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.ngrokNeedsToken, style = MaterialTheme.typography.bodyMedium)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "1. Sign up at https://ngrok.com\n2. Copy your authtoken from the dashboard\n3. Paste it below:",
+                            s.ngrokTokenInstructions,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSubtle
                         )
@@ -375,26 +378,26 @@ private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
                         OutlinedTextField(
                             value = authToken,
                             onValueChange = { authToken = it.trim(); saveResult = null },
-                            label = { Text("Auth Token") },
+                            label = { Text(s.authToken) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("2abc...") }
                         )
                         if (saveResult == true) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Token saved successfully!", style = MaterialTheme.typography.bodySmall, color = StatusRunning)
+                            Text(s.tokenSaved, style = MaterialTheme.typography.bodySmall, color = StatusRunning)
                         } else if (saveResult == false) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Failed to save token.", style = MaterialTheme.typography.bodySmall, color = StatusExited)
+                            Text(s.tokenSaveFailed, style = MaterialTheme.typography.bodySmall, color = StatusExited)
                         }
                     }
 
                     NgrokStatus.READY -> {
-                        Text("ngrok is ready to use!", style = MaterialTheme.typography.bodyMedium, color = StatusRunning)
+                        Text(s.ngrokReady, style = MaterialTheme.typography.bodyMedium, color = StatusRunning)
                     }
 
                     null -> {
-                        Text("Checking ngrok status...", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.checkingNgrokStatus, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -418,16 +421,16 @@ private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
                             }
                         },
                         enabled = authToken.length > 10 && !saving
-                    ) { Text(if (saving) "Saving..." else "Save Token") }
+                    ) { Text(if (saving) s.saving else s.saveToken) }
                 }
                 NgrokStatus.READY -> {
-                    Button(onClick = onTokenSaved) { Text("Done") }
+                    Button(onClick = onTokenSaved) { Text(s.done) }
                 }
                 else -> {}
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(s.cancel) }
         },
         containerColor = Surface2,
         shape = RoundedCornerShape(12.dp)
@@ -436,6 +439,7 @@ private fun NgrokSetupDialog(onDismiss: () -> Unit, onTokenSaved: () -> Unit) {
 
 @Composable
 private fun MinimalDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val s = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -446,7 +450,7 @@ private fun MinimalDialog(title: String, onDismiss: () -> Unit, content: @Compos
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(s.cancel) }
         },
         containerColor = Surface2,
         shape = RoundedCornerShape(12.dp)

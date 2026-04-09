@@ -17,6 +17,7 @@ import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.DeployConfig
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.protocol.DeployMode
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 
 @Composable
@@ -28,6 +29,7 @@ fun DeployDialog(
     onDeploy: (targetNodeIds: List<String>, config: DeployConfig, mode: DeployMode) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val s = LocalStrings.current
     var selectedMode by remember { mutableStateOf(DeployMode.INSTANT) }
     val selectedNodes = remember { mutableStateMapOf<String, Boolean>() }
     var containerName by remember { mutableStateOf(initialConfig?.containerName ?: container.name) }
@@ -45,7 +47,7 @@ fun DeployDialog(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
-                    "Deploy Container",
+                    s.deployContainer,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -59,7 +61,7 @@ fun DeployDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Source Container", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        Text(s.sourceContainer, style = MaterialTheme.typography.labelSmall, color = TextMuted)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(container.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text(
@@ -83,15 +85,15 @@ fun DeployDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Deploy mode selection
-                Text("Deploy Mode", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                Text(s.deployMode, style = MaterialTheme.typography.labelMedium, color = TextMuted)
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DeployModeChip("Instant", selectedMode == DeployMode.INSTANT) { selectedMode = DeployMode.INSTANT }
-                    DeployModeChip("Approval", selectedMode == DeployMode.APPROVAL) { selectedMode = DeployMode.APPROVAL }
+                    DeployModeChip(s.instant, selectedMode == DeployMode.INSTANT) { selectedMode = DeployMode.INSTANT }
+                    DeployModeChip(s.approval, selectedMode == DeployMode.APPROVAL) { selectedMode = DeployMode.APPROVAL }
                 }
                 Text(
-                    if (selectedMode == DeployMode.INSTANT) "Deploys immediately without client consent"
-                    else "Client must accept before deployment starts",
+                    if (selectedMode == DeployMode.INSTANT) s.instantDesc
+                    else s.approvalDesc,
                     style = MaterialTheme.typography.labelSmall,
                     color = TextMuted,
                     modifier = Modifier.padding(top = 4.dp)
@@ -100,12 +102,12 @@ fun DeployDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Target node selection
-                Text("Target Nodes", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                Text(s.targetNodes, style = MaterialTheme.typography.labelMedium, color = TextMuted)
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (deployableNodes.isEmpty()) {
                     Text(
-                        "No remote nodes connected",
+                        s.noRemoteNodes,
                         style = MaterialTheme.typography.bodySmall,
                         color = TextMuted,
                         modifier = Modifier.padding(vertical = 8.dp)
@@ -138,13 +140,13 @@ fun DeployDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Optional config overrides
-                Text("Options", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                Text(s.options, style = MaterialTheme.typography.labelMedium, color = TextMuted)
                 Spacer(modifier = Modifier.height(6.dp))
 
                 OutlinedTextField(
                     value = containerName,
                     onValueChange = { containerName = it },
-                    label = { Text("Container Name", fontSize = 11.sp) },
+                    label = { Text(s.containerName, fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
@@ -155,7 +157,7 @@ fun DeployDialog(
                 OutlinedTextField(
                     value = envVars,
                     onValueChange = { envVars = it },
-                    label = { Text("Environment (KEY=VALUE, one per line)", fontSize = 11.sp) },
+                    label = { Text(s.environmentLabel, fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth().heightIn(max = 60.dp),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                 )
@@ -165,7 +167,7 @@ fun DeployDialog(
                 OutlinedTextField(
                     value = volumes,
                     onValueChange = { volumes = it },
-                    label = { Text("Volumes (host:container, one per line)", fontSize = 11.sp) },
+                    label = { Text(s.volumesLabel, fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth().heightIn(max = 60.dp),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                 )
@@ -178,7 +180,7 @@ fun DeployDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = TextMuted)
+                        Text(s.cancel, color = TextMuted)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     val hasTargets = selectedNodes.any { it.value }
@@ -203,7 +205,7 @@ fun DeployDialog(
                         enabled = hasTargets,
                         colors = ButtonDefaults.buttonColors(containerColor = AccentTeal)
                     ) {
-                        Text("Deploy", color = Surface0)
+                        Text(s.deploy, color = Surface0)
                     }
                 }
             }

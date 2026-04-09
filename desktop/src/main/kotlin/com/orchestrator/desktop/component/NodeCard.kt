@@ -17,6 +17,7 @@ import com.orchestrator.common.model.ContainerStatus
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
 import com.orchestrator.common.protocol.ContainerAction
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 
 @Composable
@@ -30,6 +31,7 @@ fun NodeCard(
     processingContainers: Set<String> = emptySet(),
     onLog: ((String, String) -> Unit)? = null  // (containerId, containerName)
 ) {
+    val s = LocalStrings.current
     var expanded by remember { mutableStateOf(false) }
     val running = nodeInfo.containers.count { it.status == ContainerStatus.RUNNING }
     val total = nodeInfo.containers.size
@@ -126,7 +128,7 @@ fun NodeCard(
                     )
                     if (nodeInfo.containers.isEmpty()) {
                         Text(
-                            text = "No containers",
+                            text = s.noContainers,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextMuted,
                             modifier = Modifier.padding(vertical = 8.dp)
@@ -215,10 +217,11 @@ private fun PermChip(
 
 @Composable
 private fun PermLabel(permission: Permission) {
+    val s = LocalStrings.current
     val (text, color) = when (permission) {
-        Permission.FULL_CONTROL -> "Full Control" to AccentTeal
-        Permission.READ_ONLY -> "Read Only" to AccentBlue
-        Permission.DENIED -> "Denied" to StatusExited
+        Permission.FULL_CONTROL -> s.fullControl to AccentTeal
+        Permission.READ_ONLY -> s.readOnly to AccentBlue
+        Permission.DENIED -> s.denied to StatusExited
     }
     Text(
         text = text,

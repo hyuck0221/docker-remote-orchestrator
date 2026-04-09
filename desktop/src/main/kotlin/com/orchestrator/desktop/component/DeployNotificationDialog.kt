@@ -9,6 +9,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.orchestrator.common.protocol.WsMessage
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import androidx.compose.ui.window.Dialog
 
@@ -18,6 +19,7 @@ fun DeployNotificationDialog(
     onAccept: () -> Unit,
     onDefer: () -> Unit
 ) {
+    val s = LocalStrings.current
     Dialog(onDismissRequest = {}) {
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -26,7 +28,7 @@ fun DeployNotificationDialog(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
-                    "Deploy Request",
+                    s.deployRequest,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -34,7 +36,7 @@ fun DeployNotificationDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    "${request.fromHostName} wants to deploy a container to this node.",
+                    s.deployRequestMessage(request.fromHostName),
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -47,20 +49,20 @@ fun DeployNotificationDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        DetailRow("Image", request.config.image)
-                        request.config.containerName?.let { DetailRow("Name", it) }
+                        DetailRow(s.image, request.config.image)
+                        request.config.containerName?.let { DetailRow(s.name, it) }
                         if (request.config.ports.isNotEmpty()) {
                             DetailRow(
-                                "Ports",
+                                s.ports,
                                 request.config.ports.filter { it.publicPort != null }
                                     .joinToString(", ") { "${it.publicPort}:${it.privatePort}" }
                             )
                         }
                         if (request.config.env.isNotEmpty()) {
-                            DetailRow("Env", "${request.config.env.size} var(s)")
+                            DetailRow(s.env, "${request.config.env.size} var(s)")
                         }
                         if (request.config.volumes.isNotEmpty()) {
-                            DetailRow("Volumes", "${request.config.volumes.size} mount(s)")
+                            DetailRow(s.volumes, "${request.config.volumes.size} mount(s)")
                         }
                     }
                 }
@@ -72,14 +74,14 @@ fun DeployNotificationDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDefer) {
-                        Text("Later", color = TextMuted)
+                        Text(s.later, color = TextMuted)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = onAccept,
                         colors = ButtonDefaults.buttonColors(containerColor = AccentTeal)
                     ) {
-                        Text("Accept", color = Surface0)
+                        Text(s.accept, color = Surface0)
                     }
                 }
             }

@@ -11,6 +11,7 @@ import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
 import com.orchestrator.common.protocol.DeployMode
 import com.orchestrator.common.protocol.WsMessage
+import com.orchestrator.desktop.i18n.AppLanguage
 import com.orchestrator.common.tunnel.NgrokTunnel
 import com.orchestrator.common.tunnel.TunnelState
 import com.orchestrator.common.util.AppState
@@ -119,6 +120,10 @@ class AppViewModel(private val scope: CoroutineScope) {
     private val _displayName = MutableStateFlow("")
     val displayName: StateFlow<String> = _displayName.asStateFlow()
 
+    // Language
+    private val _language = MutableStateFlow(AppLanguage.EN)
+    val language: StateFlow<AppLanguage> = _language.asStateFlow()
+
     // Status
     private val _statusMessage = MutableStateFlow("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
@@ -140,7 +145,9 @@ class AppViewModel(private val scope: CoroutineScope) {
 
     init {
         // Load user settings immediately
-        _displayName.value = AppStateManager.loadUserSettings().displayName
+        val userSettings = AppStateManager.loadUserSettings()
+        _displayName.value = userSettings.displayName
+        _language.value = try { AppLanguage.valueOf(userSettings.language) } catch (_: Exception) { AppLanguage.EN }
 
         scope.launch(Dispatchers.IO) {
             delay(500) // Let UI settle
@@ -428,6 +435,14 @@ class AppViewModel(private val scope: CoroutineScope) {
 
     fun updateDefaultPermission(permission: Permission) { _defaultPermission.value = permission }
     fun updatePingInterval(seconds: Long) { _pingInterval.value = seconds }
+
+    fun updateLanguage(lang: AppLanguage) {
+        _language.value = lang
+        scope.launch(Dispatchers.IO) {
+            val settings = AppStateManager.loadUserSettings()
+            AppStateManager.saveUserSettings(settings.copy(language = lang.name))
+        }
+    }
 
     fun updateDisplayName(name: String) {
         _displayName.value = name

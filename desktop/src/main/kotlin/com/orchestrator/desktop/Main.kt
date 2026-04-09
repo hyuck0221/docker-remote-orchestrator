@@ -13,6 +13,10 @@ import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.orchestrator.desktop.i18n.AppLanguage
+import com.orchestrator.desktop.i18n.LocalStrings
+import com.orchestrator.desktop.i18n.toStrings
+import com.orchestrator.desktop.component.OptionChip
 import com.orchestrator.desktop.component.UpdateBanner
 import com.orchestrator.desktop.component.checkForUpdate
 import com.orchestrator.desktop.screen.ClientScreen
@@ -43,12 +47,14 @@ fun main() = application {
         icon = painterResource("icons/icon.png"),
         state = rememberWindowState(width = 960.dp, height = 700.dp)
     ) {
+        val language by viewModel.language.collectAsState()
+        CompositionLocalProvider(LocalStrings provides language.toStrings()) {
+        val s = LocalStrings.current
         MenuBar {
-            Menu("Settings") {
-                Item("Preferences...", onClick = { showSettingsDialog = true })
+            Menu(s.menuSettings) {
+                Item(s.menuPreferences, onClick = { showSettingsDialog = true })
             }
         }
-
         AppTheme {
             Surface(
                 modifier = Modifier.fillMaxSize(),
@@ -86,6 +92,7 @@ fun main() = application {
                 )
             }
         }
+        } // CompositionLocalProvider
     }
 }
 
@@ -96,6 +103,7 @@ fun GlobalSettingsDialog(
     scope: CoroutineScope,
     onDismiss: () -> Unit
 ) {
+    val s = LocalStrings.current
     val displayName by viewModel.displayName.collectAsState()
     var name by remember { mutableStateOf(displayName) }
     var autoStart by remember { mutableStateOf(AutoStartManager.isAutoStartEnabled()) }
@@ -108,17 +116,17 @@ fun GlobalSettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Settings", style = MaterialTheme.typography.headlineSmall) },
+        title = { Text(s.settings, style = MaterialTheme.typography.headlineSmall) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 // Display Name
-                Text("Display Name", style = MaterialTheme.typography.labelLarge)
-                Text("Shown to other nodes when you connect", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                Text(s.displayName, style = MaterialTheme.typography.labelLarge)
+                Text(s.displayNameDesc, style = MaterialTheme.typography.bodySmall, color = TextSubtle)
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name") },
-                    placeholder = { Text("e.g. John's MacBook") },
+                    label = { Text(s.nameLabel) },
+                    placeholder = { Text(s.namePlaceholder) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -132,8 +140,8 @@ fun GlobalSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Launch at startup", style = MaterialTheme.typography.labelLarge)
-                        Text("Start DRO when your computer boots", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                        Text(s.launchAtStartup, style = MaterialTheme.typography.labelLarge)
+                        Text(s.launchAtStartupDesc, style = MaterialTheme.typography.bodySmall, color = TextSubtle)
                     }
                     Switch(checked = autoStart, onCheckedChange = { enabled ->
                         autoStart = enabled
@@ -147,19 +155,39 @@ fun GlobalSettingsDialog(
 
                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 
-                // Version Info
-                Text("Version", style = MaterialTheme.typography.labelLarge)
+                // Language
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Current: v$currentVersion", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.language, style = MaterialTheme.typography.labelLarge)
+                        Text(s.languageDesc, style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AppLanguage.entries.forEach { lang ->
+                            val currentLang by viewModel.language.collectAsState()
+                            OptionChip(lang.label, currentLang == lang) { viewModel.updateLanguage(lang) }
+                        }
+                    }
+                }
+
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+
+                // Version Info
+                Text(s.version, style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(s.currentVersion(currentVersion), style = MaterialTheme.typography.bodyMedium)
                         if (checked && latestVersion != null && latestVersion != currentVersion) {
-                            Text("New version available: v$latestVersion", style = MaterialTheme.typography.bodySmall, color = AccentBlue, fontWeight = FontWeight.Medium)
+                            Text(s.newVersionAvailable(latestVersion!!), style = MaterialTheme.typography.bodySmall, color = AccentBlue, fontWeight = FontWeight.Medium)
                         } else if (checked && (latestVersion == null || latestVersion == currentVersion)) {
-                            Text("You're up to date!", style = MaterialTheme.typography.bodySmall, color = StatusRunning)
+                            Text(s.upToDate, style = MaterialTheme.typography.bodySmall, color = StatusRunning)
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -169,7 +197,7 @@ fun GlobalSettingsDialog(
                                     try { Desktop.getDesktop().browse(URI(url)) } catch (_: Exception) {}
                                 }
                             }) {
-                                Text("Download", style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                                Text(s.download, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
                             }
                         }
                         OutlinedButton(
@@ -189,7 +217,7 @@ fun GlobalSettingsDialog(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                if (checking) "Checking..." else "Check for Updates",
+                                if (checking) s.checking else s.checkForUpdates,
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
@@ -201,10 +229,10 @@ fun GlobalSettingsDialog(
             Button(onClick = {
                 viewModel.updateDisplayName(name)
                 onDismiss()
-            }) { Text("Save") }
+            }) { Text(s.save) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(s.cancel) }
         },
         containerColor = Surface2,
         shape = RoundedCornerShape(12.dp)

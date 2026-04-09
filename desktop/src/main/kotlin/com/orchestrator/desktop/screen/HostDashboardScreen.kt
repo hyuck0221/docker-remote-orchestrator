@@ -22,11 +22,13 @@ import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
 import com.orchestrator.common.tunnel.TunnelState
 import com.orchestrator.desktop.component.*
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import com.orchestrator.desktop.viewmodel.AppViewModel
 
 @Composable
 fun HostDashboardScreen(viewModel: AppViewModel) {
+    val s = LocalStrings.current
     val hostCode by viewModel.hostCode.collectAsState()
     val connectedNodes by viewModel.connectedNodes.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
@@ -51,7 +53,7 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                         modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Host", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                        Text(s.host, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
 
                         var codeCopied by remember { mutableStateOf(false) }
                         Surface(
@@ -67,7 +69,7 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text(if (codeCopied) "COPIED" else "CODE", style = MaterialTheme.typography.labelSmall, color = if (codeCopied) StatusRunning else TextMuted)
+                                Text(if (codeCopied) s.codeCopied else s.codeLabel, style = MaterialTheme.typography.labelSmall, color = if (codeCopied) StatusRunning else TextMuted)
                                 Text(hostCode, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = AccentBlue, letterSpacing = 1.5.sp)
                             }
                         }
@@ -118,20 +120,20 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
 
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(shape = RoundedCornerShape(6.dp), color = StatusRunning.copy(alpha = 0.08f)) {
-                            Text("${connectedNodes.size} nodes", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = StatusRunning)
+                            Text(s.nodesCount(connectedNodes.size), modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = StatusRunning)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(onClick = { viewModel.stopHost() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                            Text("Stop", style = MaterialTheme.typography.labelMedium, color = StatusExited)
+                            Text(s.stop, style = MaterialTheme.typography.labelMedium, color = StatusExited)
                         }
                     }
 
                     Row(modifier = Modifier.padding(horizontal = 24.dp)) {
-                        TabButton("My Node", selectedTab == 0) { selectedTab = 0 }
+                        TabButton(s.tabMyNode, selectedTab == 0) { selectedTab = 0 }
                         Spacer(modifier = Modifier.width(16.dp))
-                        TabButton("Nodes (${remoteNodes.size})", selectedTab == 1) { selectedTab = 1 }
+                        TabButton(s.tabNodes(remoteNodes.size), selectedTab == 1) { selectedTab = 1 }
                         Spacer(modifier = Modifier.width(16.dp))
-                        TabButton("Settings", selectedTab == 2) { selectedTab = 2 }
+                        TabButton(s.tabSettings, selectedTab == 2) { selectedTab = 2 }
                     }
                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), thickness = 0.5.dp)
                 }
@@ -166,7 +168,8 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
 
 @Composable
 private fun MyNodeTab(viewModel: AppViewModel, hostNode: Map.Entry<String, NodeInfo>?, remoteNodes: Map<String, NodeInfo>, processing: Set<String>) {
-    if (hostNode == null) { EmptyState("Docker not available", "Could not connect to local Docker engine"); return }
+    val s = LocalStrings.current
+    if (hostNode == null) { EmptyState(s.dockerNotAvailable, "Could not connect to local Docker engine"); return }
     val (nodeId, nodeInfo) = hostNode
     val running = nodeInfo.containers.count { it.status == ContainerStatus.RUNNING }
     var deployTarget by remember { mutableStateOf<ContainerInfo?>(null) }
@@ -180,7 +183,7 @@ private fun MyNodeTab(viewModel: AppViewModel, hostNode: Map.Entry<String, NodeI
 
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)) {
         item {
-            Text("$running of ${nodeInfo.containers.size} running", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp))
+            Text(s.runningOf(running, nodeInfo.containers.size), style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp))
         }
 
         // Compose project groups
@@ -257,6 +260,7 @@ private fun ContainerGroupHeader(
     viewModel: AppViewModel,
     onDeploySingle: ((ContainerInfo) -> Unit)?
 ) {
+    val s = LocalStrings.current
     var expanded by remember { mutableStateOf(true) }
     val running = containers.count { it.status == ContainerStatus.RUNNING }
 
@@ -299,7 +303,7 @@ private fun ContainerGroupHeader(
                         onClick = onDeployGroup
                     ) {
                         Text(
-                            "\u2197 Group",
+                            s.group,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = AccentTeal,
@@ -349,20 +353,21 @@ private fun RemoteNodesTab(viewModel: AppViewModel, remoteNodes: Map<String, Nod
 
 @Composable
 private fun SettingsContent(viewModel: AppViewModel) {
+    val s = LocalStrings.current
     val defaultPerm by viewModel.defaultPermission.collectAsState()
     val pingInterval by viewModel.pingInterval.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("General", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 4.dp)) }
+        item { Text(s.general, style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 4.dp)) }
         item {
-            SettingCard(title = "Default permission for new nodes", subtitle = "Applied when a new client joins") {
+            SettingCard(title = s.defaultPermission, subtitle = s.defaultPermissionDesc) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Permission.entries.forEach { perm -> OptionChip(perm.name.replace("_", " "), defaultPerm == perm) { viewModel.updateDefaultPermission(perm) } }
                 }
             }
         }
         item {
-            SettingCard(title = "WebSocket ping interval", subtitle = "How often to check connection health") {
+            SettingCard(title = s.wsPingInterval, subtitle = s.wsPingIntervalDesc) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(5L, 10L, 15L, 30L, 60L).forEach { sec -> OptionChip("${sec}s", pingInterval == sec) { viewModel.updatePingInterval(sec) } }
                 }

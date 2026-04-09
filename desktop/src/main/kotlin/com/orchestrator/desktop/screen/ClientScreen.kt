@@ -23,11 +23,13 @@ import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
 import com.orchestrator.common.protocol.DeployMode
 import com.orchestrator.desktop.component.*
+import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import com.orchestrator.desktop.viewmodel.AppViewModel
 
 @Composable
 fun ClientScreen(viewModel: AppViewModel) {
+    val s = LocalStrings.current
     val connectionState by viewModel.connectionState.collectAsState()
     val localContainers by viewModel.localContainers.collectAsState()
     val permission by viewModel.clientPermission.collectAsState()
@@ -49,7 +51,7 @@ fun ClientScreen(viewModel: AppViewModel) {
                         modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Client", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                        Text(s.client, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                         StatusPill(connectionState.name, when (connectionState) {
                             ConnectionState.CONNECTED -> StatusRunning
                             ConnectionState.CONNECTING, ConnectionState.RECONNECTING -> StatusPaused
@@ -59,18 +61,18 @@ fun ClientScreen(viewModel: AppViewModel) {
                         StatusPill(permission.name.replace("_", " "), AccentBlue)
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(onClick = { viewModel.disconnectFromHost() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                            Text("Disconnect", style = MaterialTheme.typography.labelMedium, color = StatusExited)
+                            Text(s.disconnect, style = MaterialTheme.typography.labelMedium, color = StatusExited)
                         }
                     }
                     Row(modifier = Modifier.padding(horizontal = 24.dp)) {
                         val pendingBadge = if (pendingDeploys.isNotEmpty()) " (${pendingDeploys.size})" else ""
-                        TabButton("My Node$pendingBadge", selectedTab == 0) { selectedTab = 0 }
+                        TabButton("${s.tabMyNode}$pendingBadge", selectedTab == 0) { selectedTab = 0 }
                         Spacer(modifier = Modifier.width(16.dp))
                         if (permission != Permission.DENIED) {
-                            TabButton("Nodes (${remoteNodes.size})", selectedTab == 1) { selectedTab = 1 }
+                            TabButton(s.tabNodes(remoteNodes.size), selectedTab == 1) { selectedTab = 1 }
                             Spacer(modifier = Modifier.width(16.dp))
                         }
-                        TabButton("Settings", selectedTab == 2) { selectedTab = 2 }
+                        TabButton(s.tabSettings, selectedTab == 2) { selectedTab = 2 }
                     }
                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), thickness = 0.5.dp)
                 }
@@ -121,7 +123,8 @@ private fun MyNodeTab(
     permission: Permission,
     remoteNodes: Map<String, NodeInfo>
 ) {
-    if (containers.isEmpty() && pendingDeploys.isEmpty()) { EmptyState("No containers found", "Make sure Docker is running"); return }
+    val s = LocalStrings.current
+    if (containers.isEmpty() && pendingDeploys.isEmpty()) { EmptyState(s.dockerNotAvailable, "Make sure Docker is running"); return }
     val running = containers.count { it.status == ContainerStatus.RUNNING }
     val canDeploy = permission == Permission.FULL_CONTROL && remoteNodes.isNotEmpty()
     var deployTarget by remember { mutableStateOf<ContainerInfo?>(null) }
@@ -137,7 +140,7 @@ private fun MyNodeTab(
         if (pendingDeploys.isNotEmpty()) {
             item {
                 Text(
-                    "Pending Deploys (${pendingDeploys.size})",
+                    s.pendingDeploys(pendingDeploys.size),
                     style = MaterialTheme.typography.labelMedium,
                     color = AccentTeal,
                     fontWeight = FontWeight.Medium,
@@ -154,7 +157,7 @@ private fun MyNodeTab(
         }
 
         item {
-            Text("$running of ${containers.size} running", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp))
+            Text(s.runningOf(running, containers.size), style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp))
         }
 
         // Compose project groups
@@ -229,6 +232,7 @@ private fun ClientContainerGroupHeader(
     onDeployGroup: (() -> Unit)?,
     onDeploySingle: ((ContainerInfo) -> Unit)?
 ) {
+    val s = LocalStrings.current
     var expanded by remember { mutableStateOf(true) }
     val running = containers.count { it.status == ContainerStatus.RUNNING }
 
@@ -259,7 +263,7 @@ private fun ClientContainerGroupHeader(
                 if (onDeployGroup != null) {
                     Surface(shape = RoundedCornerShape(4.dp), color = AccentTeal.copy(alpha = 0.12f), onClick = onDeployGroup) {
                         Text(
-                            "\u2197 Group",
+                            s.group,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = AccentTeal,
@@ -289,10 +293,11 @@ private fun ClientContainerGroupHeader(
 
 @Composable
 private fun NodesTab(viewModel: AppViewModel, remoteNodes: Map<String, NodeInfo>, permission: Permission, processing: Set<String>) {
-    if (permission == Permission.DENIED) { EmptyState("Access Denied", "You don't have permission to view the network"); return }
-    if (remoteNodes.isEmpty()) { EmptyState("No other nodes", "Waiting for nodes to connect"); return }
+    val s = LocalStrings.current
+    if (permission == Permission.DENIED) { EmptyState(s.denied, "You don't have permission to view the network"); return }
+    if (remoteNodes.isEmpty()) { EmptyState(s.noRemoteNodes, "Waiting for nodes to connect"); return }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)) {
-        item { Text("${remoteNodes.size} node(s) on network", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp)) }
+        item { Text(s.nodesCount(remoteNodes.size), style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp)) }
         items(remoteNodes.entries.toList()) { (nodeId, nodeInfo) ->
             NodeCard(
                 nodeId = nodeId, nodeInfo = nodeInfo, onPermissionChange = {},
@@ -306,12 +311,13 @@ private fun NodesTab(viewModel: AppViewModel, remoteNodes: Map<String, NodeInfo>
 
 @Composable
 private fun SettingsContent(viewModel: AppViewModel) {
+    val s = LocalStrings.current
     val displayName by viewModel.displayName.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("General", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 4.dp)) }
+        item { Text(s.general, style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 4.dp)) }
         item {
-            SettingCard(title = "Display name", subtitle = "How other nodes see this client") {
+            SettingCard(title = s.displayName, subtitle = s.displayNameDesc) {
                 var name by remember { mutableStateOf(displayName) }
                 OutlinedTextField(
                     value = name,
@@ -330,6 +336,7 @@ private fun PendingDeployCard(
     request: com.orchestrator.common.protocol.WsMessage.DeployRequest,
     onAccept: () -> Unit
 ) {
+    val s = LocalStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         shape = RoundedCornerShape(8.dp),
@@ -341,10 +348,10 @@ private fun PendingDeployCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(request.config.image, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text("Deploy request from ${request.fromHostName}", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                Text(s.deployRequestFrom(request.fromHostName), style = MaterialTheme.typography.labelSmall, color = TextMuted)
             }
             Surface(shape = RoundedCornerShape(6.dp), color = AccentTeal.copy(alpha = 0.15f), onClick = onAccept) {
-                Text("Deploy", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = AccentTeal, fontWeight = FontWeight.Medium)
+                Text(s.deploy, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = AccentTeal, fontWeight = FontWeight.Medium)
             }
         }
     }
