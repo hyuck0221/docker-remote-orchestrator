@@ -132,7 +132,41 @@ fun NodeCard(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
                     } else {
-                        nodeInfo.containers.forEach { container ->
+                        val grouped = nodeInfo.containers.groupBy { it.composeProject }
+                        val composeGroups = grouped.filterKeys { it != null }
+                        val ungrouped = grouped[null] ?: emptyList()
+
+                        composeGroups.forEach { (project, containers) ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                shape = RoundedCornerShape(6.dp),
+                                color = AccentMauve.copy(alpha = 0.04f)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                    val grpRunning = containers.count { it.status == ContainerStatus.RUNNING }
+                                    Text(
+                                        "$project  ($grpRunning/${containers.size})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = AccentMauve,
+                                        modifier = Modifier.padding(bottom = 2.dp)
+                                    )
+                                    containers.forEach { container ->
+                                        ContainerCard(
+                                            container = container,
+                                            showControls = canControl,
+                                            isProcessing = container.id in processingContainers,
+                                            onAction = { action -> onContainerAction(container.id, action) },
+                                            onLog = if (onLog != null) {
+                                                { onLog(container.id, container.name) }
+                                            } else null
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        ungrouped.forEach { container ->
                             ContainerCard(
                                 container = container,
                                 showControls = canControl,

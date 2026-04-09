@@ -6,8 +6,10 @@ import com.orchestrator.client.network.ConnectionState
 import com.orchestrator.client.network.HostConnection
 import com.orchestrator.client.permission.PermissionManager
 import com.orchestrator.common.model.ContainerInfo
+import com.orchestrator.common.model.DeployConfig
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
+import com.orchestrator.common.protocol.DeployMode
 import com.orchestrator.common.protocol.WsMessage
 import com.orchestrator.common.tunnel.NgrokTunnel
 import com.orchestrator.common.tunnel.TunnelState
@@ -66,7 +68,10 @@ class AppViewModel(private val scope: CoroutineScope) {
     private var messageHandler: MessageHandler? = null
     private var hostContainerMonitor: ContainerMonitor? = null
     private var localCommandExecutor: ContainerCommandExecutor? = null
+    private var localDeployer: ContainerDeployer? = null
+    private var localContainerService: ContainerService? = null
     private var hostNodeId: String? = null
+    val selfNodeId: String? get() = hostNodeId ?: clientNodeId
 
     // Client mode
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -84,6 +89,8 @@ class AppViewModel(private val scope: CoroutineScope) {
     // Processing state
     private val _processingContainers = MutableStateFlow<Set<String>>(emptySet())
     val processingContainers: StateFlow<Set<String>> = _processingContainers.asStateFlow()
+    // Track locally-initiated processing to distinguish from remote
+    private val _localProcessing = mutableSetOf<String>()
 
     // Ngrok tunnel
     private var ngrokTunnel: NgrokTunnel? = null
@@ -115,6 +122,19 @@ class AppViewModel(private val scope: CoroutineScope) {
     // Status
     private val _statusMessage = MutableStateFlow("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
+
+    // Deploy state (host side)
+    private val _deployProgress = MutableStateFlow<Map<String, WsMessage.DeployProgress>>(emptyMap())
+    val deployProgress: StateFlow<Map<String, WsMessage.DeployProgress>> = _deployProgress.asStateFlow()
+
+    // Deploy state (client side)
+    private val _pendingDeploys = MutableStateFlow<List<WsMessage.DeployRequest>>(emptyList())
+    val pendingDeploys: StateFlow<List<WsMessage.DeployRequest>> = _pendingDeploys.asStateFlow()
+    private val _activeDeployNotification = MutableStateFlow<WsMessage.DeployRequest?>(null)
+    val activeDeployNotification: StateFlow<WsMessage.DeployRequest?> = _activeDeployNotification.asStateFlow()
+
+    // Client message handler reference for deploy actions
+    private var clientHandler: ClientMessageHandler? = null
 
     // ── Init: Restore saved state ──
 
@@ -156,10 +176,35 @@ class AppViewModel(private val scope: CoroutineScope) {
 
                 nodeSessionManager = nodeSessionMgr
                 messageHandler = msgHandler
+                dashboardAggregator = dashboardAgg
 
                 // Handle commands from clients targeting the host node
                 msgHandler.onHostCommand = { command ->
                     executeLocalCommand(command.containerId, command.action)
+                }
+
+                // Handle deploy commands targeting the host node
+                msgHandler.onHostDeploy = { command ->
+                    val deployer = localDeployer
+                    if (deployer != null) {
+                        _statusMessage.value = "Deploying ${command.config.image} locally..."
+                        val result = deployer.deploy(command.commandId, command.config) { phase, msg ->
+                            _statusMessage.value = "[Deploy] $phase: $msg"
+                        }
+                        _statusMessage.value = if (result.isSuccess) "Deploy successful" else "Deploy failed: ${result.exceptionOrNull()?.message}"
+                    } else {
+                        _statusMessage.value = "Docker not available for local deploy"
+                    }
+                }
+
+                // Handle deploy progress/result callbacks
+                msgHandler.onDeployProgress = { progress ->
+                    _deployProgress.value = _deployProgress.value + (progress.commandId to progress)
+                    _statusMessage.value = "[Deploy] ${progress.phase}: ${progress.message}"
+                }
+                msgHandler.onDeployResult = { result ->
+                    _deployProgress.value = _deployProgress.value - result.commandId
+                    _statusMessage.value = if (result.success) "Deploy successful" else "Deploy failed: ${result.message}"
                 }
 
                 val code = if (!restoreCode.isNullOrEmpty()) {
@@ -189,7 +234,9 @@ class AppViewModel(private val scope: CoroutineScope) {
                 try {
                     val dockerClient = DockerClientFactory.create()
                     val containerService = ContainerService(dockerClient)
+                    localContainerService = containerService
                     localCommandExecutor = ContainerCommandExecutor(dockerClient)
+                    localDeployer = ContainerDeployer(dockerClient)
                     localLogStreamer = LogStreamer(dockerClient)
                     val monitor = ContainerMonitor(dockerClient, containerService)
                     hostContainerMonitor = monitor
@@ -248,6 +295,11 @@ class AppViewModel(private val scope: CoroutineScope) {
                     }
                     allNodes.putAll(remoteNodes)
                     _connectedNodes.value = allNodes
+                    // Sync processing state from aggregator (set by remote clients)
+                    val remoteProcessing = dashboardAgg.getProcessingContainers()
+                    // Replace remote-sourced processing with current server state
+                    // Keep locally-initiated processing, sync remote processing
+                    _processingContainers.value = (_processingContainers.value intersect _localProcessing) + remoteProcessing
                     delay(2000)
                 }
             } catch (e: Exception) {
@@ -286,7 +338,10 @@ class AppViewModel(private val scope: CoroutineScope) {
         hostContainerMonitor?.stop()
         hostContainerMonitor = null
         localCommandExecutor = null
+        localDeployer = null
+        localContainerService = null
         localLogStreamer = null
+        dashboardAggregator = null
         hostNodeId = null
         serverEngine?.stop(1000, 2000)
         serverEngine = null
@@ -307,10 +362,28 @@ class AppViewModel(private val scope: CoroutineScope) {
         scope.launch { messageHandler?.notifyPermissionChange(nodeId, permission) }
     }
 
+    private fun broadcastProcessing(containerId: String, processing: Boolean) {
+        if (_role.value == AppRole.HOST) {
+            // Host: update aggregator directly and broadcast
+            scope.launch {
+                dashboardAggregator?.setContainerProcessing(containerId, processing)
+                dashboardAggregator?.broadcastClusterState()
+            }
+        } else {
+            // Client: send to server for broadcast
+            scope.launch { hostConnection?.send(WsMessage.ContainerProcessing(containerId, processing)) }
+        }
+    }
+
+    // Reference to dashboard aggregator for host mode
+    private var dashboardAggregator: DashboardStateAggregator? = null
+
     fun sendContainerCommand(nodeId: String, containerId: String, action: com.orchestrator.common.protocol.ContainerAction) {
         if (containerId in _processingContainers.value) return
         if (nodeId == hostNodeId || nodeId == clientNodeId) { executeLocalCommand(containerId, action); return }
+        _localProcessing.add(containerId)
         _processingContainers.value = _processingContainers.value + containerId
+        broadcastProcessing(containerId, true)
         scope.launch {
             try {
                 val command = WsMessage.ContainerCommand(
@@ -319,29 +392,37 @@ class AppViewModel(private val scope: CoroutineScope) {
                     targetNodeId = nodeId
                 )
                 if (_role.value == AppRole.HOST) {
-                    // Host mode: send directly via server
                     val sent = messageHandler?.sendCommand(nodeId, command) ?: false
                     _statusMessage.value = if (sent) "Command sent" else "Failed to send command"
                 } else {
-                    // Client mode: relay through WebSocket to server
                     hostConnection?.send(command)
                     _statusMessage.value = "Command sent"
                 }
                 delay(3000)
-            } finally { _processingContainers.value = _processingContainers.value - containerId }
+            } finally {
+                _localProcessing.remove(containerId)
+                _processingContainers.value = _processingContainers.value - containerId
+                broadcastProcessing(containerId, false)
+            }
         }
     }
 
     fun executeLocalCommand(containerId: String, action: com.orchestrator.common.protocol.ContainerAction) {
         if (containerId in _processingContainers.value) return
+        _localProcessing.add(containerId)
         _processingContainers.value = _processingContainers.value + containerId
+        broadcastProcessing(containerId, true)
         scope.launch(Dispatchers.IO) {
             try {
                 val executor = localCommandExecutor ?: run { _statusMessage.value = "Docker not available"; return@launch }
                 val result = executor.execute(containerId, action)
                 _statusMessage.value = result.getOrElse { "Error: ${it.message}" }
                 delay(2000)
-            } finally { _processingContainers.value = _processingContainers.value - containerId }
+            } finally {
+                _localProcessing.remove(containerId)
+                _processingContainers.value = _processingContainers.value - containerId
+                broadcastProcessing(containerId, false)
+            }
         }
     }
 
@@ -353,27 +434,95 @@ class AppViewModel(private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             AppStateManager.saveUserSettings(UserSettings(displayName = name))
         }
+
+        // Apply immediately to active session
+        if (_role.value == AppRole.HOST) {
+            // Update host node name in dashboard aggregator
+            dashboardAggregator?.let { agg ->
+                agg.getHostNode()?.let { (id, info) ->
+                    val newName = if (name.isNotBlank()) "$name (Host)" else info.hostName
+                    agg.updateHostContainers(info.copy(hostName = newName))
+                    scope.launch { agg.broadcastClusterState() }
+                }
+            }
+        } else if (_role.value == AppRole.CLIENT) {
+            // Re-send JoinRequest with updated name so server reflects the change
+            clientNodeId?.let { nodeId ->
+                scope.launch {
+                    val containers = containerMonitor?.containers?.value ?: emptyList()
+                    val updatedInfo = NodeInfo(
+                        nodeId = nodeId,
+                        hostName = if (name.isNotBlank()) name else (try { InetAddress.getLocalHost().hostName } catch (_: Exception) { "unknown" }),
+                        os = System.getProperty("os.name", "unknown"),
+                        dockerVersion = "",
+                        containers = containers
+                    )
+                    hostConnection?.send(WsMessage.JoinRequest(
+                        hostCode = AppStateManager.load().clientConfig?.hostCode ?: "",
+                        nodeInfo = updatedInfo
+                    ))
+                }
+            }
+        }
     }
 
     // ── Log Viewer ──
 
-    fun openLogViewer(containerId: String, containerName: String) {
+    // Track remote log container for cleanup
+    private var remoteLogContainerId: String? = null
+    private var remoteLogNodeId: String? = null
+
+    fun openLogViewer(containerId: String, containerName: String, nodeId: String? = null) {
         closeLogViewer()
         _logContainerName.value = containerName
         _logOutput.value = listOf("Streaming logs for $containerName...\n")
-        val streamer = localLogStreamer ?: return
-        logJob = scope.launch(Dispatchers.IO) {
-            try {
-                streamer.streamLogs(containerId, tail = 200).collect { line ->
-                    _logOutput.value = _logOutput.value + line + "\n"
-                    if (_logOutput.value.size > 2000) _logOutput.value = _logOutput.value.takeLast(1500)
+
+        // Determine if this is a remote node's container
+        val isRemoteNode = nodeId != null && nodeId != hostNodeId && nodeId != clientNodeId
+
+        if (isRemoteNode && _role.value == AppRole.HOST) {
+            // Remote node: relay logs through WebSocket via callback
+            remoteLogContainerId = containerId
+            remoteLogNodeId = nodeId
+            logJob = scope.launch(Dispatchers.IO) {
+                try {
+                    messageHandler?.subscribeRemoteLogs(nodeId!!, containerId, tail = 200) { chunk ->
+                        chunk.lines.forEach { line ->
+                            _logOutput.value = _logOutput.value + line + "\n"
+                            if (_logOutput.value.size > 2000) _logOutput.value = _logOutput.value.takeLast(1500)
+                        }
+                    }
+                    // Keep alive until cancelled
+                    awaitCancellation()
+                } catch (_: CancellationException) {
+                } catch (e: Exception) {
+                    _logOutput.value = _logOutput.value + "Remote log stream error: ${e.message}\n"
                 }
-            } catch (_: CancellationException) {
-            } catch (e: Exception) { _logOutput.value = _logOutput.value + "Log stream error: ${e.message}\n" }
+            }
+        } else {
+            // Local node: stream directly from Docker
+            val streamer = localLogStreamer ?: return
+            logJob = scope.launch(Dispatchers.IO) {
+                try {
+                    streamer.streamLogs(containerId, tail = 200).collect { line ->
+                        _logOutput.value = _logOutput.value + line + "\n"
+                        if (_logOutput.value.size > 2000) _logOutput.value = _logOutput.value.takeLast(1500)
+                    }
+                } catch (_: CancellationException) {
+                } catch (e: Exception) { _logOutput.value = _logOutput.value + "Log stream error: ${e.message}\n" }
+            }
         }
     }
 
     fun closeLogViewer() {
+        // Unsubscribe from remote log stream if active
+        remoteLogContainerId?.let { cid ->
+            remoteLogNodeId?.let { nid ->
+                scope.launch { messageHandler?.unsubscribeRemoteLogs(nid, cid) }
+            }
+        }
+        remoteLogContainerId = null
+        remoteLogNodeId = null
         logJob?.cancel(); logJob = null
         _logOutput.value = emptyList(); _logContainerName.value = ""
     }
@@ -386,6 +535,7 @@ class AppViewModel(private val scope: CoroutineScope) {
                 _statusMessage.value = "Connecting to Docker..."
                 val dockerClient = DockerClientFactory.create()
                 val containerService = ContainerService(dockerClient)
+                localContainerService = containerService
                 val commandExecutor = ContainerCommandExecutor(dockerClient)
                 localCommandExecutor = commandExecutor
                 localLogStreamer = LogStreamer(dockerClient)
@@ -407,12 +557,33 @@ class AppViewModel(private val scope: CoroutineScope) {
                 )
 
                 lateinit var connection: HostConnection
+                val deployer = ContainerDeployer(dockerClient)
                 val clientHandler = ClientMessageHandler(
-                    commandExecutor = commandExecutor, logStreamer = logStreamer,
+                    commandExecutor = commandExecutor, deployer = deployer,
+                    logStreamer = logStreamer,
                     permissionManager = permissionManager, scope = scope,
                     onSendMessage = { msg -> connection.send(msg) }
                 )
-                connection = HostConnection(clientHandler)
+                this@AppViewModel.clientHandler = clientHandler
+                connection = HostConnection(
+                    clientMessageHandler = clientHandler,
+                    onConnected = {
+                        // Re-send JoinRequest on every (re)connection so the server
+                        // re-registers this node after a disconnect/reconnect cycle
+                        val currentContainers = monitor.containers.value.ifEmpty { containerService.listContainers() }
+                        val freshNodeInfo = nodeInfo.copy(containers = currentContainers)
+                        connection.send(WsMessage.JoinRequest(hostCode = hostCode, nodeInfo = freshNodeInfo))
+                        logger.info("Sent JoinRequest (re)connect for node $nodeId")
+                    },
+                    onDisconnectedPermanently = { reason ->
+                        logger.info("Permanently disconnected: $reason")
+                        // Launch in a separate scope to avoid cancelling ourselves
+                        scope.launch(Dispatchers.Main) {
+                            _statusMessage.value = reason
+                            disconnectFromHost()
+                        }
+                    }
+                )
                 hostConnection = connection
 
                 scope.launch { connection.connectionState.collect { _connectionState.value = it } }
@@ -430,7 +601,7 @@ class AppViewModel(private val scope: CoroutineScope) {
                     _currentScreen.value = AppScreen.HOME; return@launch
                 }
 
-                connection.send(WsMessage.JoinRequest(hostCode = hostCode, nodeInfo = nodeInfo))
+                // JoinRequest is now sent automatically by onConnected callback
                 val accepted = withTimeoutOrNull(5000L) { clientHandler.joinAccepted.first { it != null } }
                 if (accepted != true) {
                     connection.close(); hostConnection = null; localCommandExecutor = null; clientNodeId = null
@@ -441,6 +612,19 @@ class AppViewModel(private val scope: CoroutineScope) {
                 monitor.start(scope)
                 scope.launch { monitor.containers.collect { _localContainers.value = it } }
                 scope.launch { clientHandler.clusterNodes.collect { nodes -> _remoteNodes.value = nodes.filterKeys { it != nodeId } } }
+                scope.launch {
+                    var previousRemote = emptySet<String>()
+                    clientHandler.remoteProcessingContainers.collect { remote ->
+                        // Remove containers that are no longer processing remotely, add new ones
+                        val removed = previousRemote - remote
+                        _processingContainers.value = (_processingContainers.value - removed) + remote
+                        previousRemote = remote
+                    }
+                }
+                // Collect deploy notifications from client handler
+                scope.launch { clientHandler.pendingDeploys.collect { _pendingDeploys.value = it } }
+                scope.launch { clientHandler.activeDeployNotification.collect { _activeDeployNotification.value = it } }
+
                 scope.launch {
                     while (isActive) {
                         delay(5000)
@@ -465,12 +649,66 @@ class AppViewModel(private val scope: CoroutineScope) {
         }
     }
 
+    // ── Deploy Actions ──
+
+    fun extractDeployConfig(container: ContainerInfo): DeployConfig {
+        // Try full inspect for env, volumes, restart policy
+        val inspected = localContainerService?.inspectContainerConfig(container.id)
+        if (inspected != null) return inspected
+
+        // Fallback to basic info
+        val labels = mutableMapOf<String, String>()
+        container.composeProject?.let { labels["com.docker.compose.project"] = it }
+        container.composeService?.let { labels["com.docker.compose.service"] = it }
+        return DeployConfig(
+            image = container.image,
+            containerName = container.name,
+            ports = container.ports,
+            labels = labels
+        )
+    }
+
+    fun sendDeployCommand(targetNodeIds: List<String>, config: DeployConfig, mode: DeployMode) {
+        scope.launch {
+            for (targetNodeId in targetNodeIds) {
+                val command = WsMessage.DeployCommand(
+                    commandId = UUID.randomUUID().toString().take(8),
+                    targetNodeId = targetNodeId,
+                    config = config,
+                    deployMode = mode
+                )
+                val sent = if (_role.value == AppRole.HOST) {
+                    messageHandler?.sendDeployCommand(command) ?: false
+                } else {
+                    // Client sends deploy command to server for relay
+                    hostConnection?.send(command)
+                    true
+                }
+                _statusMessage.value = if (sent) {
+                    val modeLabel = if (mode == DeployMode.INSTANT) "Instant" else "Approval"
+                    "$modeLabel deploy sent: ${config.image}"
+                } else {
+                    "Failed to send deploy to node $targetNodeId"
+                }
+            }
+        }
+    }
+
+    fun acceptDeploy(requestId: String) {
+        clientHandler?.acceptDeploy(requestId)
+    }
+
+    fun deferDeploy(requestId: String) {
+        clientHandler?.deferDeploy(requestId)
+    }
+
     fun disconnectFromHost() {
         closeLogViewer()
         containerMonitor?.stop()
         hostConnection?.close()
-        hostConnection = null; containerMonitor = null
-        localCommandExecutor = null; localLogStreamer = null; clientNodeId = null
+        hostConnection = null; containerMonitor = null; clientHandler = null
+        localCommandExecutor = null; localContainerService = null; localLogStreamer = null; clientNodeId = null
+        _pendingDeploys.value = emptyList(); _activeDeployNotification.value = null
         _role.value = AppRole.NONE; _connectionState.value = ConnectionState.DISCONNECTED
         _localContainers.value = emptyList(); _remoteNodes.value = emptyMap()
         _currentScreen.value = AppScreen.HOME; _statusMessage.value = "Disconnected"

@@ -80,7 +80,8 @@ fun main(args: Array<String>) {
                 },
                 state = c.state ?: "unknown",
                 ports = c.ports?.map { p -> PortMapping(p.privatePort ?: 0, p.publicPort, p.type?.toString()?.lowercase() ?: "tcp", p.ip) } ?: emptyList(),
-                createdAt = c.created ?: 0L
+                createdAt = c.created ?: 0L,
+                uptime = c.status ?: ""
             )
         }
 

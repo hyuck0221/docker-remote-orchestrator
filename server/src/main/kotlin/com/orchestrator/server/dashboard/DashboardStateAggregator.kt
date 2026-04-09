@@ -17,6 +17,13 @@ class DashboardStateAggregator(
     private val logger = LoggerFactory.getLogger(DashboardStateAggregator::class.java)
     private val dashboardSessions = ConcurrentHashMap<String, WebSocketSession>()
     private val hostNode = AtomicReference<Pair<String, NodeInfo>?>(null)
+    private val _processingContainers = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun setContainerProcessing(containerId: String, processing: Boolean) {
+        if (processing) _processingContainers.add(containerId) else _processingContainers.remove(containerId)
+    }
+
+    fun getProcessingContainers(): Set<String> = _processingContainers.toSet()
 
     fun setHostNode(nodeId: String, nodeInfo: NodeInfo) {
         hostNode.set(nodeId to nodeInfo)
@@ -50,7 +57,7 @@ class DashboardStateAggregator(
         // Include remote nodes
         nodes.putAll(allSessions.mapValues { it.value.nodeInfo })
 
-        val clusterState = WsMessage.ClusterState(nodes = nodes)
+        val clusterState = WsMessage.ClusterState(nodes = nodes, processingContainers = getProcessingContainers())
         val json = AppJson.encodeToString<WsMessage>(clusterState)
 
         // Broadcast to dashboard sessions

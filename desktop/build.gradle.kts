@@ -95,6 +95,11 @@ compose.desktop {
             windows {
                 val icoFile = project.file("build/generated/icons/icon.ico")
                 if (icoFile.exists()) iconFile.set(icoFile)
+                shortcut = true
+                dirChooser = true
+                menuGroup = "DRO"
+                upgradeUuid = "e4a5f6c7-8b9d-4e2a-b1c3-d5e6f7a8b9c0"
+                perUserInstall = true
             }
 
             linux {

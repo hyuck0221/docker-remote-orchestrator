@@ -1,6 +1,7 @@
 package com.orchestrator.common.protocol
 
 import com.orchestrator.common.model.ContainerInfo
+import com.orchestrator.common.model.DeployConfig
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
 import kotlinx.serialization.SerialName
@@ -65,13 +66,15 @@ sealed class WsMessage {
     @SerialName("log_subscribe")
     data class LogSubscribe(
         val containerId: String,
-        val tail: Int = 100
+        val tail: Int = 100,
+        val targetNodeId: String? = null
     ) : WsMessage()
 
     @Serializable
     @SerialName("log_unsubscribe")
     data class LogUnsubscribe(
-        val containerId: String
+        val containerId: String,
+        val targetNodeId: String? = null
     ) : WsMessage()
 
     @Serializable
@@ -85,7 +88,64 @@ sealed class WsMessage {
     @Serializable
     @SerialName("cluster_state")
     data class ClusterState(
-        val nodes: Map<String, NodeInfo>
+        val nodes: Map<String, NodeInfo>,
+        val processingContainers: Set<String> = emptySet()
+    ) : WsMessage()
+
+    // ── Bidirectional ──
+
+    @Serializable
+    @SerialName("container_processing")
+    data class ContainerProcessing(
+        val containerId: String,
+        val processing: Boolean
+    ) : WsMessage()
+
+    // ── Deploy Messages ──
+
+    @Serializable
+    @SerialName("deploy_command")
+    data class DeployCommand(
+        val commandId: String,
+        val targetNodeId: String,
+        val config: DeployConfig,
+        val deployMode: DeployMode
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("deploy_request")
+    data class DeployRequest(
+        val requestId: String,
+        val fromHostName: String,
+        val config: DeployConfig,
+        val requestedAt: Long = System.currentTimeMillis()
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("deploy_response")
+    data class DeployResponse(
+        val requestId: String,
+        val nodeId: String,
+        val accepted: Boolean
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("deploy_progress")
+    data class DeployProgress(
+        val commandId: String,
+        val nodeId: String,
+        val phase: DeployPhase,
+        val message: String = ""
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("deploy_result")
+    data class DeployResult(
+        val commandId: String,
+        val nodeId: String,
+        val success: Boolean,
+        val containerId: String? = null,
+        val message: String = ""
     ) : WsMessage()
 }
 
@@ -95,4 +155,19 @@ enum class ContainerAction {
     STOP,
     RESTART,
     REMOVE
+}
+
+@Serializable
+enum class DeployMode {
+    INSTANT,
+    APPROVAL
+}
+
+@Serializable
+enum class DeployPhase {
+    PULLING,
+    CREATING,
+    STARTING,
+    COMPLETE,
+    FAILED
 }

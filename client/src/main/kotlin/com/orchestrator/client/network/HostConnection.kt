@@ -24,7 +24,10 @@ class HostConnection(
     private val useTls: Boolean = false,
     private val initialBackoffMs: Long = 1000L,
     private val maxBackoffMs: Long = 30000L,
-    private val backoffMultiplier: Double = 2.0
+    private val backoffMultiplier: Double = 2.0,
+    private val maxReconnectAttempts: Int = 3,
+    private val onConnected: (suspend () -> Unit)? = null,
+    private val onDisconnectedPermanently: (suspend (reason: String) -> Unit)? = null
 ) {
     private val logger = LoggerFactory.getLogger(HostConnection::class.java)
 
@@ -97,31 +100,45 @@ class HostConnection(
                 httpClient
             }
 
+            var reconnectAttempts = 0
+            var serverClosedCleanly = false
+            var wasConnected = false
+
             while (isActive) {
-                _connectionState.value = if (backoff == initialBackoffMs) {
+                _connectionState.value = if (reconnectAttempts == 0) {
                     ConnectionState.CONNECTING
                 } else {
                     ConnectionState.RECONNECTING
                 }
+
+                wasConnected = false
+                serverClosedCleanly = false
 
                 try {
                     val block: suspend DefaultClientWebSocketSession.() -> Unit = {
                         wsSession = this
                         _connectionState.value = ConnectionState.CONNECTED
                         backoff = initialBackoffMs
+                        wasConnected = true
                         logger.info("Connected to server $actualHost:$actualPort ($scheme)")
+
+                        // Re-send JoinRequest on every (re)connection
+                        onConnected?.invoke()
 
                         for (frame in incoming) {
                             when (frame) {
                                 is Frame.Text -> {
                                     val text = frame.readText()
                                     clientMessageHandler.handleMessage(text)
+                                    // Only reset reconnect counter after receiving real data
+                                    reconnectAttempts = 0
                                 }
                                 is Frame.Ping -> {
                                     send(Frame.Pong(frame.data))
                                 }
                                 is Frame.Close -> {
                                     logger.info("Server closed connection")
+                                    serverClosedCleanly = true
                                     break
                                 }
                                 else -> {}
@@ -147,7 +164,25 @@ class HostConnection(
 
                 wsSession = null
                 _connectionState.value = ConnectionState.DISCONNECTED
-                logger.info("Reconnecting in ${backoff}ms...")
+
+                // If server sent a clean Close frame, disconnect permanently
+                if (serverClosedCleanly) {
+                    logger.info("Host server shut down, disconnecting permanently")
+                    onDisconnectedPermanently?.invoke("Host connection closed")
+                    break
+                }
+
+                // Always increment reconnect attempts after a disconnect/failure
+                reconnectAttempts++
+
+                // If max reconnect attempts exceeded, give up
+                if (reconnectAttempts >= maxReconnectAttempts) {
+                    logger.warn("Max reconnect attempts ($maxReconnectAttempts) reached, giving up")
+                    onDisconnectedPermanently?.invoke("Host connection lost")
+                    break
+                }
+
+                logger.info("Reconnecting in ${backoff}ms... (attempt $reconnectAttempts/$maxReconnectAttempts)")
                 delay(backoff)
                 backoff = (backoff * backoffMultiplier).toLong().coerceAtMost(maxBackoffMs)
             }

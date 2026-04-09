@@ -1,10 +1,11 @@
 package com.orchestrator.server.handler
 
-import com.orchestrator.common.model.Permission
-import com.orchestrator.common.protocol.WsMessage
-import com.orchestrator.common.util.AppJson
 import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.ContainerStatus
+import com.orchestrator.common.model.Permission
+import com.orchestrator.common.protocol.DeployMode
+import com.orchestrator.common.protocol.WsMessage
+import com.orchestrator.common.util.AppJson
 import com.orchestrator.server.dashboard.DashboardStateAggregator
 import com.orchestrator.server.session.HostCodeManager
 import com.orchestrator.server.session.NodeSessionManager
@@ -19,7 +20,10 @@ class MessageHandler(
     private val dashboardAggregator: DashboardStateAggregator,
     private val defaultPermission: Permission = Permission.READ_ONLY,
     private val webhookManager: WebhookManager? = null,
-    var onHostCommand: (suspend (WsMessage.ContainerCommand) -> Unit)? = null
+    var onHostCommand: (suspend (WsMessage.ContainerCommand) -> Unit)? = null,
+    var onHostDeploy: (suspend (WsMessage.DeployCommand) -> Unit)? = null,
+    var onDeployProgress: ((WsMessage.DeployProgress) -> Unit)? = null,
+    var onDeployResult: ((WsMessage.DeployResult) -> Unit)? = null
 ) {
     private val previousContainerStates = mutableMapOf<String, Map<String, ContainerStatus>>()
     private val logger = LoggerFactory.getLogger(MessageHandler::class.java)
@@ -42,8 +46,13 @@ class MessageHandler(
             }
             is WsMessage.StateUpdate -> { handleStateUpdate(message); null }
             is WsMessage.ContainerCommand -> { handleRelayCommand(message); null }
-            is WsMessage.LogChunk -> { handleLogChunk(message); null }
+            is WsMessage.ContainerProcessing -> { handleContainerProcessing(message); null }
+            is WsMessage.LogChunk -> { handleLogChunk(message, wsSession); null }
             is WsMessage.CommandResult -> { handleCommandResult(message); null }
+            is WsMessage.DeployCommand -> { handleDeployCommand(message); null }
+            is WsMessage.DeployResponse -> { logger.info("Deploy response: ${message.requestId} accepted=${message.accepted}"); null }
+            is WsMessage.DeployProgress -> { handleDeployProgress(message); null }
+            is WsMessage.DeployResult -> { handleDeployResult(message); null }
             else -> { logger.warn("Unexpected message type from client: ${message::class.simpleName}"); null }
         }
     }
@@ -127,9 +136,53 @@ class MessageHandler(
         }
     }
 
-    private fun handleLogChunk(logChunk: WsMessage.LogChunk) {
+    // Tracks log callbacks: containerId -> callback that receives log lines
+    private val logCallbacks = mutableMapOf<String, (WsMessage.LogChunk) -> Unit>()
+    // Tracks WebSocket-based log subscribers: containerId -> session
+    private val logSubscribers = mutableMapOf<String, WebSocketSession>()
+
+    private suspend fun handleLogChunk(logChunk: WsMessage.LogChunk, senderSession: WebSocketSession) {
         logger.debug("Log chunk from ${logChunk.nodeId} for container ${logChunk.containerId}: ${logChunk.lines.size} lines")
-        // TODO: Forward to dashboard subscribers
+        // Forward to callback subscriber (host desktop app)
+        logCallbacks[logChunk.containerId]?.invoke(logChunk)
+        // Forward to WebSocket subscriber (dashboard)
+        val subscriber = logSubscribers[logChunk.containerId]
+        if (subscriber != null) {
+            try {
+                subscriber.send(Frame.Text(AppJson.encodeToString<WsMessage>(logChunk)))
+            } catch (e: Exception) {
+                logger.warn("Failed to forward log chunk for container ${logChunk.containerId}", e)
+                logSubscribers.remove(logChunk.containerId)
+            }
+        }
+    }
+
+    suspend fun subscribeRemoteLogs(targetNodeId: String, containerId: String, tail: Int = 200, onLogChunk: (WsMessage.LogChunk) -> Unit) {
+        val session = nodeSessionManager.getSession(targetNodeId) ?: run {
+            logger.warn("Log subscribe: node not found: $targetNodeId")
+            return
+        }
+        logCallbacks[containerId] = onLogChunk
+        try {
+            val msg = WsMessage.LogSubscribe(containerId = containerId, tail = tail, targetNodeId = targetNodeId)
+            session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(msg)))
+            logger.info("Subscribed to remote logs: node=$targetNodeId container=$containerId")
+        } catch (e: Exception) {
+            logger.error("Failed to subscribe to remote logs on node $targetNodeId", e)
+            logCallbacks.remove(containerId)
+        }
+    }
+
+    suspend fun unsubscribeRemoteLogs(targetNodeId: String, containerId: String) {
+        logCallbacks.remove(containerId)
+        val session = nodeSessionManager.getSession(targetNodeId) ?: return
+        try {
+            val msg = WsMessage.LogUnsubscribe(containerId = containerId, targetNodeId = targetNodeId)
+            session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(msg)))
+            logger.info("Unsubscribed from remote logs: node=$targetNodeId container=$containerId")
+        } catch (e: Exception) {
+            logger.error("Failed to unsubscribe from remote logs on node $targetNodeId", e)
+        }
     }
 
     private suspend fun handleRelayCommand(command: WsMessage.ContainerCommand) {
@@ -150,6 +203,11 @@ class MessageHandler(
         sendCommand(targetId, command)
     }
 
+    private suspend fun handleContainerProcessing(msg: WsMessage.ContainerProcessing) {
+        dashboardAggregator.setContainerProcessing(msg.containerId, msg.processing)
+        dashboardAggregator.broadcastClusterState()
+    }
+
     private fun handleCommandResult(result: WsMessage.CommandResult) {
         logger.info("Command ${result.commandId} on node ${result.nodeId}: success=${result.success} ${result.message}")
     }
@@ -168,6 +226,68 @@ class MessageHandler(
         } catch (e: Exception) {
             logger.error("Failed to send command to node $nodeId", e)
             return false
+        }
+    }
+
+    // ── Deploy Routing ──
+
+    suspend fun sendDeployCommand(command: WsMessage.DeployCommand): Boolean {
+        val session = nodeSessionManager.getSession(command.targetNodeId) ?: run {
+            logger.warn("Deploy target node not found: ${command.targetNodeId}")
+            return false
+        }
+
+        try {
+            when (command.deployMode) {
+                DeployMode.INSTANT -> {
+                    session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(command)))
+                    logger.info("Instant deploy sent to node ${command.targetNodeId}: ${command.config.image}")
+                }
+                DeployMode.APPROVAL -> {
+                    val hostInfo = dashboardAggregator.getHostNode()
+                    val request = WsMessage.DeployRequest(
+                        requestId = command.commandId,
+                        fromHostName = hostInfo?.second?.hostName ?: "Host",
+                        config = command.config
+                    )
+                    session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(request)))
+                    logger.info("Deploy request sent to node ${command.targetNodeId}: ${command.config.image}")
+                }
+            }
+            return true
+        } catch (e: Exception) {
+            logger.error("Failed to send deploy to node ${command.targetNodeId}", e)
+            return false
+        }
+    }
+
+    private suspend fun handleDeployCommand(command: WsMessage.DeployCommand) {
+        val targetId = command.targetNodeId
+        if (targetId.startsWith("host-")) {
+            logger.info("Routing deploy to host node: ${command.config.image}")
+            onHostDeploy?.invoke(command)
+            return
+        }
+        logger.info("Routing deploy command to node $targetId: ${command.config.image}")
+        sendDeployCommand(command)
+    }
+
+    private fun handleDeployProgress(progress: WsMessage.DeployProgress) {
+        logger.info("Deploy progress [${progress.commandId}]: ${progress.phase} - ${progress.message}")
+        onDeployProgress?.invoke(progress)
+    }
+
+    private fun handleDeployResult(result: WsMessage.DeployResult) {
+        logger.info("Deploy result [${result.commandId}]: success=${result.success} ${result.message}")
+        onDeployResult?.invoke(result)
+        if (webhookManager != null) {
+            webhookManager.notify(
+                event = if (result.success) "container_deploy_success" else "container_deploy_failed",
+                nodeId = result.nodeId,
+                containerId = result.containerId ?: "",
+                containerName = "",
+                detail = result.message
+            )
         }
     }
 }

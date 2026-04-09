@@ -13,7 +13,10 @@ data class ContainerInfo(
     val cpuUsage: Double? = null,
     val memoryUsage: Long? = null,
     val memoryLimit: Long? = null,
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    val uptime: String = "",
+    val composeProject: String? = null,
+    val composeService: String? = null
 )
 
 @Serializable

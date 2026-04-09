@@ -40,9 +40,12 @@ fun Route.webSocketRoutes(
             logger.error("Node WebSocket error (node=$trackedNodeId)", e)
         } finally {
             trackedNodeId?.let { nodeId ->
-                nodeSessionManager?.removeSession(nodeId)
-                    ?: messageHandler.removeNode(nodeId)
-                logger.info("Node session cleaned up: $nodeId")
+                if (nodeSessionManager != null) {
+                    nodeSessionManager.removeSessionIfMatch(nodeId, this)
+                } else {
+                    messageHandler.removeNode(nodeId)
+                }
+                logger.info("Node session cleanup attempted: $nodeId")
             }
         }
     }

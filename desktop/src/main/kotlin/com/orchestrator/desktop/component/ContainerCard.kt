@@ -26,7 +26,8 @@ fun ContainerCard(
     showControls: Boolean = false,
     isProcessing: Boolean = false,
     onAction: ((ContainerAction) -> Unit)? = null,
-    onLog: (() -> Unit)? = null
+    onLog: (() -> Unit)? = null,
+    onDeploy: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -49,14 +50,27 @@ fun ContainerCard(
 
             // Name + image
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(
-                    text = container.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = container.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (container.uptime.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = container.uptime,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted,
+                            fontSize = 9.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
                 Text(
                     text = container.image.substringAfterLast("/"),
                     style = MaterialTheme.typography.labelSmall,
@@ -92,6 +106,12 @@ fun ContainerCard(
                 modifier = Modifier.width(56.dp)
             )
 
+            // Deploy button
+            if (onDeploy != null && !isProcessing) {
+                ActionBtn("\u2197", AccentTeal) { onDeploy() }
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+
             // Log/Console button
             if (onLog != null && container.status == ContainerStatus.RUNNING) {
                 ActionBtn(">_", AccentBlue) { onLog() }
@@ -110,9 +130,11 @@ fun ContainerCard(
                         )
                     }
                 } else {
-                    Row(modifier = Modifier.width(72.dp), horizontalArrangement = Arrangement.End) {
+                    Row(modifier = Modifier.width(96.dp), horizontalArrangement = Arrangement.End) {
                         if (container.status != ContainerStatus.RUNNING) {
                             ActionBtn("\u25B6", StatusRunning) { onAction(ContainerAction.START) }
+                            Spacer(modifier = Modifier.width(2.dp))
+                            ActionBtn("\u2715", StatusExited) { onAction(ContainerAction.REMOVE) }
                         }
                         if (container.status == ContainerStatus.RUNNING) {
                             ActionBtn("\u25A0", StatusExited) { onAction(ContainerAction.STOP) }

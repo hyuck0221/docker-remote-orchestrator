@@ -82,7 +82,7 @@ fun UpdateBanner(
     }
 }
 
-private suspend fun checkForUpdate(repo: String, currentVersion: String): Pair<String?, String?> {
+suspend fun checkForUpdate(repo: String, currentVersion: String): Pair<String?, String?> {
     val client = HttpClient(CIO) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }

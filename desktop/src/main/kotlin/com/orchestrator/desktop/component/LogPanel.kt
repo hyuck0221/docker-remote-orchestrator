@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,7 +19,9 @@ import com.orchestrator.desktop.theme.*
 fun LogPanel(
     output: List<String>,
     containerName: String,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    expanded: Boolean = false,
+    onToggleExpand: (() -> Unit)? = null
 ) {
     val scrollState = rememberScrollState()
 
@@ -50,6 +53,24 @@ fun LogPanel(
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier.weight(1f)
                     )
+                    // Expand/Collapse button
+                    if (onToggleExpand != null) {
+                        Surface(
+                            modifier = Modifier.size(24.dp),
+                            shape = RoundedCornerShape(4.dp),
+                            color = AccentBlue.copy(alpha = 0.12f),
+                            onClick = onToggleExpand
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    if (expanded) "\u2913" else "\u2912",  // ⤓ ⤒
+                                    fontSize = 13.sp,
+                                    color = AccentBlue
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     TextButton(
                         onClick = onClose,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
@@ -59,7 +80,7 @@ fun LogPanel(
                 }
             }
 
-            // Log output
+            // Log output - selectable text
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -67,14 +88,16 @@ fun LogPanel(
                     .verticalScroll(scrollState)
                     .padding(8.dp)
             ) {
-                Text(
-                    text = output.joinToString(""),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                SelectionContainer {
+                    Text(
+                        text = output.joinToString(""),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }

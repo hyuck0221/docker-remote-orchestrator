@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.sp
 import com.orchestrator.common.tunnel.NgrokStatus
 import com.orchestrator.common.tunnel.NgrokTunnel
 import com.orchestrator.desktop.theme.*
+import com.orchestrator.desktop.viewmodel.AppRole
+import com.orchestrator.desktop.viewmodel.AppScreen
 import com.orchestrator.desktop.viewmodel.AppViewModel
 import kotlinx.coroutines.launch
 
@@ -21,9 +23,11 @@ import kotlinx.coroutines.launch
 fun HomeScreen(viewModel: AppViewModel) {
     var showHostDialog by remember { mutableStateOf(false) }
     var showClientDialog by remember { mutableStateOf(false) }
-    var showSettingsDialog by remember { mutableStateOf(false) }
     val statusMessage by viewModel.statusMessage.collectAsState()
-    val displayName by viewModel.displayName.collectAsState()
+    val role by viewModel.role.collectAsState()
+    val hostCode by viewModel.hostCode.collectAsState()
+    val connectedNodes by viewModel.connectedNodes.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
@@ -99,12 +103,69 @@ fun HomeScreen(viewModel: AppViewModel) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            TextButton(onClick = { showSettingsDialog = true }) {
-                Text(
-                    if (displayName.isNotBlank()) "Settings ($displayName)" else "Settings",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSubtle
-                )
+            // Show running session if active
+            if (role == AppRole.HOST) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = StatusRunning.copy(alpha = 0.08f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Host Server Running", style = MaterialTheme.typography.labelMedium, color = StatusRunning, fontWeight = FontWeight.SemiBold)
+                            Text("Code: $hostCode  \u00B7  ${connectedNodes.size} node(s)", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                        }
+                        // Open dashboard
+                        TextButton(onClick = { viewModel.navigateTo(AppScreen.HOST_DASHBOARD) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Open", style = MaterialTheme.typography.labelMedium, color = AccentBlue)
+                        }
+                        // Stop button
+                        Surface(
+                            modifier = Modifier.size(28.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = StatusExited.copy(alpha = 0.12f),
+                            onClick = { viewModel.stopHost() }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("\u2715", fontSize = 13.sp, color = StatusExited)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (role == AppRole.CLIENT) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = AccentTeal.copy(alpha = 0.08f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Connected as Client", style = MaterialTheme.typography.labelMedium, color = AccentTeal, fontWeight = FontWeight.SemiBold)
+                            Text("Status: ${connectionState.name}", style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                        }
+                        TextButton(onClick = { viewModel.navigateTo(AppScreen.CLIENT_CONNECT) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Open", style = MaterialTheme.typography.labelMedium, color = AccentBlue)
+                        }
+                        Surface(
+                            modifier = Modifier.size(28.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = StatusExited.copy(alpha = 0.12f),
+                            onClick = { viewModel.disconnectFromHost() }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("\u2715", fontSize = 13.sp, color = StatusExited)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -183,41 +244,6 @@ fun HomeScreen(viewModel: AppViewModel) {
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 shape = RoundedCornerShape(8.dp)
             ) { Text("Start") }
-        }
-    }
-
-    if (showSettingsDialog) {
-        MinimalDialog(
-            title = "Settings",
-            onDismiss = { showSettingsDialog = false }
-        ) {
-            var name by remember { mutableStateOf(displayName) }
-
-            Text("Display Name", style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                "Shown to other nodes when you connect",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSubtle
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Name") },
-                placeholder = { Text("e.g. John's MacBook") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    viewModel.updateDisplayName(name)
-                    showSettingsDialog = false
-                },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) { Text("Save") }
         }
     }
 

@@ -1,5 +1,8 @@
 package com.orchestrator.desktop.screen
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +37,7 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
     val tunnelUrl by viewModel.tunnelUrl.collectAsState()
     val tunnelError by viewModel.tunnelError.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
+    var logExpanded by remember { mutableStateOf(false) }
 
     val hostNode = connectedNodes.entries.firstOrNull { it.key.startsWith("host-") }
     val remoteNodes = connectedNodes.filterKeys { !it.startsWith("host-") }
@@ -134,7 +138,7 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
             }
 
             when (selectedTab) {
-                0 -> MyNodeTab(viewModel, hostNode, processing)
+                0 -> MyNodeTab(viewModel, hostNode, remoteNodes, processing)
                 1 -> RemoteNodesTab(viewModel, remoteNodes, processing)
                 2 -> SettingsContent(viewModel)
             }
@@ -142,29 +146,187 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
 
         // Log overlay
         if (logName.isNotEmpty()) {
-            Surface(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter), shadowElevation = 8.dp) {
-                LogPanel(output = logOutput, containerName = logName, onClose = { viewModel.closeLogViewer() })
+            Surface(
+                modifier = Modifier.fillMaxWidth()
+                    .fillMaxHeight(if (logExpanded) 1f else 0.45f)
+                    .align(Alignment.BottomCenter),
+                shadowElevation = 8.dp
+            ) {
+                LogPanel(
+                    output = logOutput,
+                    containerName = logName,
+                    onClose = { logExpanded = false; viewModel.closeLogViewer() },
+                    expanded = logExpanded,
+                    onToggleExpand = { logExpanded = !logExpanded }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MyNodeTab(viewModel: AppViewModel, hostNode: Map.Entry<String, NodeInfo>?, processing: Set<String>) {
+private fun MyNodeTab(viewModel: AppViewModel, hostNode: Map.Entry<String, NodeInfo>?, remoteNodes: Map<String, NodeInfo>, processing: Set<String>) {
     if (hostNode == null) { EmptyState("Docker not available", "Could not connect to local Docker engine"); return }
     val (nodeId, nodeInfo) = hostNode
     val running = nodeInfo.containers.count { it.status == ContainerStatus.RUNNING }
+    var deployTarget by remember { mutableStateOf<ContainerInfo?>(null) }
+    var deployGroupTarget by remember { mutableStateOf<List<ContainerInfo>?>(null) }
+    val hasRemoteNodes = remoteNodes.isNotEmpty()
+
+    // Group containers: compose project groups + ungrouped
+    val grouped = nodeInfo.containers.groupBy { it.composeProject }
+    val composeGroups = grouped.filterKeys { it != null }.map { (project, containers) -> project!! to containers }
+    val ungrouped = grouped[null] ?: emptyList()
 
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)) {
         item {
             Text("$running of ${nodeInfo.containers.size} running", style = MaterialTheme.typography.labelMedium, color = TextMuted, modifier = Modifier.padding(bottom = 8.dp))
         }
-        items(nodeInfo.containers) { container ->
+
+        // Compose project groups
+        composeGroups.forEach { (project, containers) ->
+            item(key = "group-$project") {
+                ContainerGroupHeader(
+                    projectName = project,
+                    containers = containers,
+                    processing = processing,
+                    onDeployGroup = if (hasRemoteNodes) { { deployGroupTarget = containers } } else null,
+                    nodeId = nodeId,
+                    viewModel = viewModel,
+                    onDeploySingle = if (hasRemoteNodes) { { c -> deployTarget = c } } else null
+                )
+            }
+        }
+
+        // Ungrouped containers
+        items(ungrouped, key = { it.id }) { container ->
             ContainerCard(
                 container = container, showControls = true, isProcessing = container.id in processing,
                 onAction = { action -> viewModel.sendContainerCommand(nodeId, container.id, action) },
-                onLog = if (container.status == ContainerStatus.RUNNING) { { viewModel.openLogViewer(container.id, container.name) } } else null
+                onLog = if (container.status == ContainerStatus.RUNNING) { { viewModel.openLogViewer(container.id, container.name) } } else null,
+                onDeploy = if (hasRemoteNodes) { { deployTarget = container } } else null
             )
+        }
+    }
+
+    // Single container deploy dialog
+    deployTarget?.let { container ->
+        val inspectedConfig = remember(container.id) { viewModel.extractDeployConfig(container) }
+        DeployDialog(
+            container = container,
+            remoteNodes = remoteNodes,
+            selfNodeId = viewModel.selfNodeId,
+            initialConfig = inspectedConfig,
+            onDeploy = { targets, config, mode ->
+                viewModel.sendDeployCommand(targets, config, mode)
+                deployTarget = null
+            },
+            onDismiss = { deployTarget = null }
+        )
+    }
+
+    // Group deploy dialog
+    deployGroupTarget?.let { containers ->
+        val inspectedConfigs = remember(containers.map { it.id }) {
+            containers.map { viewModel.extractDeployConfig(it) }
+        }
+        GroupDeployDialog(
+            containers = containers,
+            projectName = containers.first().composeProject ?: "",
+            remoteNodes = remoteNodes,
+            selfNodeId = viewModel.selfNodeId,
+            initialConfigs = inspectedConfigs,
+            onDeploy = { targets, configs, mode ->
+                configs.forEach { config ->
+                    viewModel.sendDeployCommand(targets, config, mode)
+                }
+                deployGroupTarget = null
+            },
+            onDismiss = { deployGroupTarget = null }
+        )
+    }
+}
+
+@Composable
+private fun ContainerGroupHeader(
+    projectName: String,
+    containers: List<ContainerInfo>,
+    processing: Set<String>,
+    onDeployGroup: (() -> Unit)?,
+    nodeId: String,
+    viewModel: AppViewModel,
+    onDeploySingle: ((ContainerInfo) -> Unit)?
+) {
+    var expanded by remember { mutableStateOf(true) }
+    val running = containers.count { it.status == ContainerStatus.RUNNING }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = AccentMauve.copy(alpha = 0.06f)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = AccentMauve.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        "$running / ${containers.size}",
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentMauve
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    projectName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (onDeployGroup != null) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = AccentTeal.copy(alpha = 0.12f),
+                        onClick = onDeployGroup
+                    ) {
+                        Text(
+                            "\u2197 Group",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentTeal,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                Text(if (expanded) "\u25B4" else "\u25BE", color = TextMuted, fontSize = 12.sp)
+            }
+
+            AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
+                Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp)) {
+                    containers.forEach { container ->
+                        ContainerCard(
+                            container = container,
+                            showControls = true,
+                            isProcessing = container.id in processing,
+                            onAction = { action -> viewModel.sendContainerCommand(nodeId, container.id, action) },
+                            onLog = if (container.status == ContainerStatus.RUNNING) {
+                                { viewModel.openLogViewer(container.id, container.name) }
+                            } else null,
+                            onDeploy = onDeploySingle?.let { { it(container) } }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -179,7 +341,7 @@ private fun RemoteNodesTab(viewModel: AppViewModel, remoteNodes: Map<String, Nod
                 onPermissionChange = { perm -> viewModel.updateNodePermission(nodeId, perm) },
                 onContainerAction = { cid, action -> viewModel.sendContainerCommand(nodeId, cid, action) },
                 showPermissionToggle = true, canControl = true, processingContainers = processing,
-                onLog = { cid, cname -> viewModel.openLogViewer(cid, cname) }
+                onLog = { cid, cname -> viewModel.openLogViewer(cid, cname, nodeId) }
             )
         }
     }

@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.Container
 import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.ContainerStatus
+import com.orchestrator.common.model.DeployConfig
 import com.orchestrator.common.model.PortMapping
 import org.slf4j.LoggerFactory
 
@@ -23,6 +24,52 @@ class ContainerService(private val dockerClient: DockerClient) {
         }
     }
 
+    fun inspectContainerConfig(containerId: String): DeployConfig? {
+        return try {
+            val inspection = dockerClient.inspectContainerCmd(containerId).exec()
+            val config = inspection.config
+            val hostConfig = inspection.hostConfig
+
+            val env = config?.env?.toList() ?: emptyList()
+            val labels = config?.labels ?: emptyMap()
+
+            // Extract volume binds
+            val volumes = hostConfig?.binds?.map { it.toString() } ?: emptyList()
+
+            // Extract port mappings from host config
+            val ports = hostConfig?.portBindings?.bindings?.flatMap { (exposedPort, bindings) ->
+                bindings?.map { binding ->
+                    PortMapping(
+                        privatePort = exposedPort.port,
+                        publicPort = binding.hostPortSpec?.toIntOrNull(),
+                        type = exposedPort.protocol?.name?.lowercase() ?: "tcp"
+                    )
+                } ?: emptyList()
+            } ?: emptyList()
+
+            // Restart policy
+            val restartPolicy = when (hostConfig?.restartPolicy?.name) {
+                "always" -> "always"
+                "unless-stopped" -> "unless-stopped"
+                "on-failure" -> "on-failure"
+                else -> "no"
+            }
+
+            DeployConfig(
+                image = config?.image ?: inspection.imageId ?: "",
+                containerName = inspection.name?.removePrefix("/"),
+                ports = ports,
+                env = env,
+                volumes = volumes,
+                restartPolicy = restartPolicy,
+                labels = labels
+            )
+        } catch (e: Exception) {
+            logger.error("Failed to inspect container $containerId", e)
+            null
+        }
+    }
+
     fun getDockerVersion(): String {
         return try {
             dockerClient.versionCmd().exec().version ?: "unknown"
@@ -33,6 +80,7 @@ class ContainerService(private val dockerClient: DockerClient) {
     }
 
     private fun Container.toContainerInfo(): ContainerInfo {
+        val labels = this.labels ?: emptyMap()
         return ContainerInfo(
             id = this.id.take(12),
             name = this.names?.firstOrNull()?.removePrefix("/") ?: "unnamed",
@@ -47,7 +95,10 @@ class ContainerService(private val dockerClient: DockerClient) {
                     ip = port.ip
                 )
             } ?: emptyList(),
-            createdAt = this.created ?: 0L
+            createdAt = this.created ?: 0L,
+            uptime = this.status ?: "",
+            composeProject = labels["com.docker.compose.project"],
+            composeService = labels["com.docker.compose.service"]
         )
     }
 

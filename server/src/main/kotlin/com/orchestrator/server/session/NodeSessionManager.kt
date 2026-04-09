@@ -37,6 +37,22 @@ class NodeSessionManager {
         }
     }
 
+    /**
+     * Remove session only if the WebSocket session matches.
+     * Prevents a stale connection's cleanup from removing a freshly reconnected session.
+     */
+    fun removeSessionIfMatch(nodeId: String, wsSession: io.ktor.websocket.WebSocketSession) {
+        sessions.computeIfPresent(nodeId) { _, session ->
+            if (session.wsSession === wsSession) {
+                logger.info("Node disconnected: $nodeId (${session.nodeInfo.hostName})")
+                null // remove
+            } else {
+                logger.info("Skipping stale disconnect for node $nodeId (already reconnected)")
+                session // keep the new session
+            }
+        }
+    }
+
     fun getSession(nodeId: String): NodeSession? = sessions[nodeId]
 
     fun getAllSessions(): Map<String, NodeSession> = sessions.toMap()

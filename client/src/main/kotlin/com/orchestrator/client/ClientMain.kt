@@ -48,6 +48,7 @@ fun main(args: Array<String>) = runBlocking {
 
     val containerService = ContainerService(dockerClient)
     val commandExecutor = ContainerCommandExecutor(dockerClient)
+    val deployer = ContainerDeployer(dockerClient)
     val logStreamer = LogStreamer(dockerClient)
     val containerMonitor = ContainerMonitor(dockerClient, containerService)
     val permissionManager = PermissionManager()
@@ -84,21 +85,36 @@ fun main(args: Array<String>) = runBlocking {
     lateinit var hostConnection: HostConnection
     val clientMessageHandler = ClientMessageHandler(
         commandExecutor = commandExecutor,
+        deployer = deployer,
         logStreamer = logStreamer,
         permissionManager = permissionManager,
         scope = this,
         onSendMessage = { message -> hostConnection.send(message) }
     )
-    hostConnection = HostConnection(clientMessageHandler, useTls = useTls)
+    hostConnection = HostConnection(
+        clientMessageHandler = clientMessageHandler,
+        useTls = useTls,
+        onConnected = {
+            // Re-send JoinRequest on every (re)connection
+            val currentContainers = containerMonitor.containers.value.ifEmpty { containerService.listContainers() }
+            val freshNodeInfo = nodeInfo.copy(containers = currentContainers)
+            hostConnection.send(WsMessage.JoinRequest(hostCode = hostCode, nodeInfo = freshNodeInfo))
+            logger.info("Sent JoinRequest (re)connect for node $nodeId")
+        },
+        onDisconnectedPermanently = { reason ->
+            logger.error("Disconnected: $reason")
+            containerMonitor.stop()
+            hostConnection.close()
+        }
+    )
 
     // Connect to server
     val scheme = if (useTls) "wss" else "ws"
     logger.info("Connecting to server $scheme://$serverHost:$serverPort with host code $hostCode...")
     hostConnection.connect(serverHost, serverPort, this)
 
-    // Wait for connection and send join request
+    // Wait for connection (JoinRequest is sent automatically by onConnected callback)
     hostConnection.connectionState.first { it == com.orchestrator.client.network.ConnectionState.CONNECTED }
-    hostConnection.send(WsMessage.JoinRequest(hostCode = hostCode, nodeInfo = nodeInfo))
 
     // Start container monitoring
     containerMonitor.start(this)
