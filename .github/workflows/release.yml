@@ -26,8 +26,8 @@ jobs:
             java-arch: x64
           - os: windows-latest
             platform: windows-x64
-            task: packageMsi
-            ext: msi
+            task: createDistributable
+            ext: exe
             java-arch: x64
 
     runs-on: ${{ matrix.os }}
@@ -150,6 +150,11 @@ jobs:
           codesign --verify --verbose "$APP_PATH" || echo "Verification note: ad-hoc signed"
         shell: bash
 
+      - name: Install create-dmg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+        shell: bash
+
       - name: Create DMG (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -157,22 +162,78 @@ jobs:
           APP_NAME=$(basename "$APP_PATH" .app)
           DMG_DIR=desktop/build/compose/binaries/main/dmg
           mkdir -p "$DMG_DIR"
-          hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_DIR/${APP_NAME}-${{ steps.version.outputs.version }}.dmg"
+          DMG_OUT="$DMG_DIR/${APP_NAME}-${{ steps.version.outputs.version }}.dmg"
+
+          # Stage the .app in a temporary folder so create-dmg only packages the app.
+          STAGING=$(mktemp -d)
+          cp -R "$APP_PATH" "$STAGING/"
+
+          # Classic drag-to-Applications DMG layout.
+          # Window 600x380, app icon on the left, Applications shortcut on the right.
+          create-dmg \
+            --volname "$APP_NAME" \
+            --window-pos 200 120 \
+            --window-size 600 380 \
+            --icon-size 120 \
+            --icon "${APP_NAME}.app" 160 190 \
+            --hide-extension "${APP_NAME}.app" \
+            --app-drop-link 440 190 \
+            --no-internet-enable \
+            "$DMG_OUT" \
+            "$STAGING" || {
+              echo "create-dmg failed, falling back to hdiutil"
+              hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_OUT"
+            }
+
+          rm -rf "$STAGING"
           echo "DMG created:"
           ls -la "$DMG_DIR/"
         shell: bash
 
-      - name: Build distribution (Windows)
+      - name: Build app image (Windows)
         if: runner.os == 'Windows'
-        run: ./gradlew :desktop:${{ matrix.task }} --no-daemon --stacktrace
+        run: ./gradlew :desktop:createDistributable --no-daemon --stacktrace
         shell: bash
+
+      - name: Create installer with Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $imageRoot = "desktop/build/compose/binaries/main/app"
+          $imageDir = Get-ChildItem -Path $imageRoot -Directory | Select-Object -First 1
+          if (-not $imageDir) {
+            Write-Error "No app image directory found under $imageRoot"
+            exit 1
+          }
+          Write-Host "App image dir: $($imageDir.FullName)"
+
+          $outputDir = "desktop/build/compose/binaries/main/installer"
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          $outputAbs = (Resolve-Path $outputDir).Path
+
+          $env:APP_VERSION = "${{ steps.version.outputs.version }}"
+          $env:APP_IMAGE_DIR = $imageDir.FullName
+          $env:OUTPUT_DIR = $outputAbs
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup not found at default path, installing via choco"
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+
+          & $iscc "desktop/installer/windows/dro-installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host "Installer output:"
+          Get-ChildItem $outputAbs
 
       - name: Find and rename artifact
         id: artifact
         shell: bash
         run: |
           mkdir -p dist
-          find desktop/build/compose/binaries -name "*.dmg" -o -name "*.msi" -o -name "*.deb" | while read f; do
+          find desktop/build/compose/binaries \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" \) | while read f; do
             filename=$(basename "$f")
             name="${filename%.*}"
             ext="${filename##*.}"
@@ -208,7 +269,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir -p release
-          find all-artifacts -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.deb" \) -exec cp {} release/ \;
+          find all-artifacts -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" \) -exec cp {} release/ \;
           echo "Release files:"
           ls -la release/
 
@@ -224,7 +285,7 @@ jobs:
             |----------|------|
             | macOS (Apple Silicon) | `*-macos-arm64.dmg` |
             | macOS (Intel) | `*-macos-x64.dmg` |
-            | Windows | `*-windows-x64.msi` |
+            | Windows | `*-windows-x64.exe` |
 
             ### Installation
             1. Download the file for your platform

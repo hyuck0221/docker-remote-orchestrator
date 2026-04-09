@@ -17,8 +17,12 @@ import com.orchestrator.desktop.i18n.AppLanguage
 import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.i18n.toStrings
 import com.orchestrator.desktop.component.OptionChip
+import com.orchestrator.desktop.component.UpdateActionButtons
 import com.orchestrator.desktop.component.UpdateBanner
+import com.orchestrator.desktop.component.UpdateInstallState
 import com.orchestrator.desktop.component.checkForUpdate
+import com.orchestrator.desktop.component.downloadUpdateFile
+import com.orchestrator.desktop.component.launchInstallerAndExit
 import com.orchestrator.desktop.screen.ClientScreen
 import com.orchestrator.desktop.screen.HomeScreen
 import com.orchestrator.desktop.screen.HostDashboardScreen
@@ -113,6 +117,7 @@ fun GlobalSettingsDialog(
     var downloadUrl by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
+    var installState by remember { mutableStateOf<UpdateInstallState>(UpdateInstallState.Idle) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -192,13 +197,26 @@ fun GlobalSettingsDialog(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (checked && latestVersion != null && latestVersion != currentVersion) {
-                            TextButton(onClick = {
-                                downloadUrl?.let { url ->
+                            UpdateActionButtons(
+                                state = installState,
+                                url = downloadUrl,
+                                onStart = { url ->
+                                    scope.launch(Dispatchers.IO) {
+                                        try {
+                                            installState = UpdateInstallState.Downloading(0, -1)
+                                            val file = downloadUpdateFile(url) { read, total ->
+                                                installState = UpdateInstallState.Downloading(read, total)
+                                            }
+                                            launchInstallerAndExit(file)
+                                        } catch (e: Exception) {
+                                            installState = UpdateInstallState.Failed(e.message ?: "unknown")
+                                        }
+                                    }
+                                },
+                                onBrowser = { url ->
                                     try { Desktop.getDesktop().browse(URI(url)) } catch (_: Exception) {}
                                 }
-                            }) {
-                                Text(s.download, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
-                            }
+                            )
                         }
                         OutlinedButton(
                             onClick = {
@@ -222,6 +240,15 @@ fun GlobalSettingsDialog(
                             )
                         }
                     }
+                }
+
+                val dlState = installState
+                if (dlState is UpdateInstallState.Downloading && dlState.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { (dlState.bytesRead.toFloat() / dlState.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = AccentBlue
+                    )
                 }
             }
         },

@@ -29,6 +29,11 @@ interface Strings {
     val settings: String
     val download: String
     val dismiss: String
+    val downloading: String
+    fun downloadingPercent(percent: Int): String
+    val installAndRestart: String
+    val downloadFailedRetry: String
+    val openInBrowser: String
 
     // ── Home Screen ──
     val startAsHost: String
@@ -211,6 +216,11 @@ object EnStrings : Strings {
     override val settings = "Settings"
     override val download = "Download"
     override val dismiss = "Dismiss"
+    override val downloading = "Downloading..."
+    override fun downloadingPercent(percent: Int) = "Downloading... $percent%"
+    override val installAndRestart = "Install & Restart"
+    override val downloadFailedRetry = "Download failed. Retry?"
+    override val openInBrowser = "Open in browser"
 
     // ── Home Screen ──
     override val startAsHost = "Start as Host"
@@ -393,6 +403,11 @@ object KoStrings : Strings {
     override val settings = "설정"
     override val download = "다운로드"
     override val dismiss = "닫기"
+    override val downloading = "다운로드 중..."
+    override fun downloadingPercent(percent: Int) = "다운로드 중... $percent%"
+    override val installAndRestart = "설치 후 재시작"
+    override val downloadFailedRetry = "다운로드 실패. 다시 시도하시겠습니까?"
+    override val openInBrowser = "브라우저로 열기"
 
     // ── Home Screen ──
     override val startAsHost = "호스트로 시작"

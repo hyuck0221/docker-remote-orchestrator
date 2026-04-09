@@ -1,7 +1,6 @@
 package com.orchestrator.desktop.component
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -12,14 +11,28 @@ import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.utils.io.*
 import kotlinx.coroutines.*
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.*
 import java.awt.Desktop
+import java.io.File
 import java.net.URI
+import kotlin.system.exitProcess
+
+sealed class UpdateInstallState {
+    object Idle : UpdateInstallState()
+    data class Downloading(val bytesRead: Long, val total: Long) : UpdateInstallState() {
+        val percent: Int get() = if (total > 0) ((bytesRead * 100) / total).toInt().coerceIn(0, 100) else -1
+    }
+    data class Failed(val message: String) : UpdateInstallState()
+}
 
 @Composable
 fun UpdateBanner(
@@ -30,17 +43,15 @@ fun UpdateBanner(
     val s = LocalStrings.current
     var latestVersion by remember { mutableStateOf<String?>(null) }
     var downloadUrl by remember { mutableStateOf<String?>(null) }
-    var checking by remember { mutableStateOf(false) }
     var dismissed by remember { mutableStateOf(false) }
+    var installState by remember { mutableStateOf<UpdateInstallState>(UpdateInstallState.Idle) }
 
     LaunchedEffect(Unit) {
-        checking = true
         try {
             val (version, url) = checkForUpdate(githubRepo, currentVersion)
             latestVersion = version
             downloadUrl = url
         } catch (_: Exception) {}
-        checking = false
     }
 
     if (!dismissed && latestVersion != null && latestVersion != currentVersion) {
@@ -48,40 +59,166 @@ fun UpdateBanner(
             modifier = Modifier.fillMaxWidth(),
             color = AccentBlue.copy(alpha = 0.08f)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    s.updateAvailable(latestVersion!!),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = AccentBlue,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f)
-                )
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        s.updateAvailable(latestVersion!!),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = AccentBlue,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
 
-                TextButton(
-                    onClick = {
-                        downloadUrl?.let { url ->
-                            try {
-                                Desktop.getDesktop().browse(URI(url))
-                            } catch (_: Exception) {}
+                    UpdateActionButtons(
+                        state = installState,
+                        url = downloadUrl,
+                        onStart = { url ->
+                            scope.launch(Dispatchers.IO) {
+                                runDownloadAndInstall(url) { installState = it }
+                            }
+                        },
+                        onBrowser = { url ->
+                            try { Desktop.getDesktop().browse(URI(url)) } catch (_: Exception) {}
                         }
-                    },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(s.download, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                    )
+
+                    if (installState !is UpdateInstallState.Downloading) {
+                        TextButton(
+                            onClick = { dismissed = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(s.dismiss, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                        }
+                    }
                 }
 
-                TextButton(
-                    onClick = { dismissed = true },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(s.dismiss, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                val st = installState
+                if (st is UpdateInstallState.Downloading && st.total > 0) {
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { (st.bytesRead.toFloat() / st.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = AccentBlue
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+fun UpdateActionButtons(
+    state: UpdateInstallState,
+    url: String?,
+    onStart: (String) -> Unit,
+    onBrowser: (String) -> Unit
+) {
+    val s = LocalStrings.current
+    when (state) {
+        UpdateInstallState.Idle -> {
+            TextButton(
+                onClick = { url?.let(onStart) },
+                enabled = url != null,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text(s.download, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        is UpdateInstallState.Downloading -> {
+            val label = if (state.percent >= 0) s.downloadingPercent(state.percent) else s.downloading
+            TextButton(
+                onClick = {},
+                enabled = false,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = AccentBlue)
+            }
+        }
+        is UpdateInstallState.Failed -> {
+            TextButton(
+                onClick = { url?.let(onStart) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text(s.downloadFailedRetry, style = MaterialTheme.typography.labelMedium, color = AccentBlue, fontWeight = FontWeight.SemiBold)
+            }
+            TextButton(
+                onClick = { url?.let(onBrowser) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(s.openInBrowser, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+            }
+        }
+    }
+}
+
+private suspend fun runDownloadAndInstall(
+    url: String,
+    onStateChange: (UpdateInstallState) -> Unit
+) {
+    try {
+        onStateChange(UpdateInstallState.Downloading(0, -1))
+        val file = downloadUpdateFile(url) { read, total ->
+            onStateChange(UpdateInstallState.Downloading(read, total))
+        }
+        launchInstallerAndExit(file)
+    } catch (e: Exception) {
+        onStateChange(UpdateInstallState.Failed(e.message ?: "unknown"))
+    }
+}
+
+suspend fun downloadUpdateFile(
+    url: String,
+    onProgress: (bytesRead: Long, total: Long) -> Unit
+): File {
+    val client = HttpClient(CIO) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 30 * 60 * 1000L
+            connectTimeoutMillis = 30_000L
+            socketTimeoutMillis = 5 * 60 * 1000L
+        }
+        followRedirects = true
+    }
+    try {
+        val fileName = url.substringAfterLast('/').substringBefore('?').ifEmpty { "dro-update.bin" }
+        val tmpDir = File(System.getProperty("java.io.tmpdir"), "dro-update")
+        tmpDir.mkdirs()
+        val outFile = File(tmpDir, fileName)
+        if (outFile.exists()) outFile.delete()
+
+        client.prepareGet(url).execute { response ->
+            val total = response.contentLength() ?: -1L
+            val channel: ByteReadChannel = response.bodyAsChannel()
+            var read = 0L
+            outFile.outputStream().buffered().use { out ->
+                while (!channel.isClosedForRead) {
+                    val packet = channel.readRemaining(65536L)
+                    val bytes = packet.readByteArray()
+                    if (bytes.isNotEmpty()) {
+                        out.write(bytes)
+                        read += bytes.size
+                        onProgress(read, total)
+                    }
+                }
+            }
+        }
+        return outFile
+    } finally {
+        client.close()
+    }
+}
+
+fun launchInstallerAndExit(file: File) {
+    try {
+        if (Desktop.isDesktopSupported()) {
+            Desktop.getDesktop().open(file)
+        }
+    } catch (_: Exception) {}
+    // Give the OS a brief moment to spawn the installer process before we exit,
+    // so file handles on the executable are released for overwrite.
+    Thread {
+        try { Thread.sleep(500) } catch (_: Exception) {}
+        exitProcess(0)
+    }.start()
 }
 
 suspend fun checkForUpdate(repo: String, currentVersion: String): Pair<String?, String?> {
