@@ -24,8 +24,8 @@ class HostConnection(
     private val useTls: Boolean = false,
     private val initialBackoffMs: Long = 1000L,
     private val maxBackoffMs: Long = 30000L,
-    private val backoffMultiplier: Double = 2.0,
-    private val maxReconnectAttempts: Int = 3,
+    private val backoffMultiplier: Double = 1.5,
+    private val maxReconnectAttempts: Int = Int.MAX_VALUE,
     private val onConnected: (suspend () -> Unit)? = null,
     private val onDisconnectedPermanently: (suspend (reason: String) -> Unit)? = null
 ) {
@@ -38,10 +38,10 @@ class HostConnection(
     private var connectionJob: Job? = null
     private val httpClient = HttpClient(CIO) {
         install(WebSockets) {
-            pingIntervalMillis = 10_000
+            pingIntervalMillis = 5_000
         }
         engine {
-            requestTimeout = 60_000
+            requestTimeout = 0
             https {
                 if (useTls) {
                     trustManager = object : javax.net.ssl.X509TrustManager {
@@ -83,10 +83,10 @@ class HostConnection(
             val client = if (actualTls && !useTls) {
                 HttpClient(CIO) {
                     install(WebSockets) {
-                        pingIntervalMillis = 10_000
+                        pingIntervalMillis = 5_000
                     }
                     engine {
-                        requestTimeout = 0 // no timeout for long-lived WebSocket
+                        requestTimeout = 0
                         https {
                             trustManager = object : javax.net.ssl.X509TrustManager {
                                 override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
