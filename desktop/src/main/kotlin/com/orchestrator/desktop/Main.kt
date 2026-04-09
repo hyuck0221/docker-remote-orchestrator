@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.net.URI
 
-const val GITHUB_REPO = "shimhyuck/docker-remote-orchestrator"
+const val GITHUB_REPO = "hyuck0221/docker-remote-orchestrator"
 
 fun main() = application {
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
