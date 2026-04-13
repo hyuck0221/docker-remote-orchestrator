@@ -115,6 +115,7 @@ class AppViewModel(private val scope: CoroutineScope) {
     val logContainerName: StateFlow<String> = _logContainerName.asStateFlow()
     private var logJob: Job? = null
     private var localLogStreamer: LogStreamer? = null
+    private val hostLogStreamJobs = mutableMapOf<String, Job>()
 
     // User settings
     private val _displayName = MutableStateFlow("")
@@ -212,6 +213,29 @@ class AppViewModel(private val scope: CoroutineScope) {
                 msgHandler.onDeployResult = { result ->
                     _deployProgress.value = _deployProgress.value - result.commandId
                     _statusMessage.value = if (result.success) "Deploy successful" else "Deploy failed: ${result.message}"
+                }
+
+                // Stream host's local container logs to a requesting client
+                msgHandler.onHostLogSubscribe = { containerId, tail, sendChunk ->
+                    hostLogStreamJobs.remove(containerId)?.cancel()
+                    val streamer = localLogStreamer
+                    if (streamer == null) {
+                        logger.warn("Host log subscribe requested but localLogStreamer is null")
+                    } else {
+                        hostLogStreamJobs[containerId] = scope.launch(Dispatchers.IO) {
+                            try {
+                                streamer.streamLogs(containerId, tail).collect { line ->
+                                    sendChunk(listOf(line))
+                                }
+                            } catch (_: CancellationException) {
+                            } catch (e: Exception) {
+                                logger.warn("Host log stream error for container $containerId: ${e.message}")
+                            }
+                        }
+                    }
+                }
+                msgHandler.onHostLogUnsubscribe = { containerId ->
+                    hostLogStreamJobs.remove(containerId)?.cancel()
                 }
 
                 val code = if (!restoreCode.isNullOrEmpty()) {
@@ -514,6 +538,27 @@ class AppViewModel(private val scope: CoroutineScope) {
                     _logOutput.value = _logOutput.value + "Remote log stream error: ${e.message}\n"
                 }
             }
+        } else if (isRemoteNode && _role.value == AppRole.CLIENT) {
+            // Client viewing another node's container: request logs via server
+            val handler = clientHandler ?: return
+            remoteLogContainerId = containerId
+            remoteLogNodeId = nodeId
+            logJob = scope.launch(Dispatchers.IO) {
+                try {
+                    handler.subscribeRemoteLogs(nodeId!!, containerId, tail = 200)
+                    handler.remoteLogChunks
+                        .filter { it.containerId == containerId }
+                        .collect { chunk ->
+                            chunk.lines.forEach { line ->
+                                _logOutput.value = _logOutput.value + line + "\n"
+                                if (_logOutput.value.size > 2000) _logOutput.value = _logOutput.value.takeLast(1500)
+                            }
+                        }
+                } catch (_: CancellationException) {
+                } catch (e: Exception) {
+                    _logOutput.value = _logOutput.value + "Remote log stream error: ${e.message}\n"
+                }
+            }
         } else {
             // Local node: stream directly from Docker
             val streamer = localLogStreamer ?: return
@@ -533,7 +578,11 @@ class AppViewModel(private val scope: CoroutineScope) {
         // Unsubscribe from remote log stream if active
         remoteLogContainerId?.let { cid ->
             remoteLogNodeId?.let { nid ->
-                scope.launch { messageHandler?.unsubscribeRemoteLogs(nid, cid) }
+                when (_role.value) {
+                    AppRole.HOST -> scope.launch { messageHandler?.unsubscribeRemoteLogs(nid, cid) }
+                    AppRole.CLIENT -> scope.launch { clientHandler?.unsubscribeRemoteLogs(nid, cid) }
+                    else -> {}
+                }
             }
         }
         remoteLogContainerId = null

@@ -11,8 +11,11 @@ import com.orchestrator.client.docker.LogStreamer
 import com.orchestrator.client.permission.PermissionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
@@ -44,6 +47,9 @@ class ClientMessageHandler(
 
     private val logStreamJobs = mutableMapOf<String, Job>()
 
+    private val _remoteLogChunks = MutableSharedFlow<WsMessage.LogChunk>(extraBufferCapacity = 256)
+    val remoteLogChunks: SharedFlow<WsMessage.LogChunk> = _remoteLogChunks.asSharedFlow()
+
     fun handleMessage(rawMessage: String) {
         val message = try {
             AppJson.decodeFromString<WsMessage>(rawMessage)
@@ -57,6 +63,7 @@ class ClientMessageHandler(
             is WsMessage.ContainerCommand -> handleContainerCommand(message)
             is WsMessage.LogSubscribe -> handleLogSubscribe(message)
             is WsMessage.LogUnsubscribe -> handleLogUnsubscribe(message)
+            is WsMessage.LogChunk -> { scope.launch { _remoteLogChunks.emit(message) } }
             is WsMessage.PermissionUpdate -> handlePermissionUpdate(message)
             is WsMessage.ClusterState -> handleClusterState(message)
             is WsMessage.DeployCommand -> handleDeployCommand(message)
@@ -118,6 +125,16 @@ class ClientMessageHandler(
     private fun handleLogUnsubscribe(unsubscribe: WsMessage.LogUnsubscribe) {
         logStreamJobs.remove(unsubscribe.containerId)?.cancel()
         logger.info("Stopped log streaming for container ${unsubscribe.containerId}")
+    }
+
+    suspend fun subscribeRemoteLogs(targetNodeId: String, containerId: String, tail: Int = 200) {
+        onSendMessage(WsMessage.LogSubscribe(containerId = containerId, tail = tail, targetNodeId = targetNodeId))
+        logger.info("Requested remote logs: node=$targetNodeId container=$containerId")
+    }
+
+    suspend fun unsubscribeRemoteLogs(targetNodeId: String, containerId: String) {
+        onSendMessage(WsMessage.LogUnsubscribe(containerId = containerId, targetNodeId = targetNodeId))
+        logger.info("Cancelled remote log request: node=$targetNodeId container=$containerId")
     }
 
     // ── Deploy Handling ──

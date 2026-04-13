@@ -23,7 +23,9 @@ class MessageHandler(
     var onHostCommand: (suspend (WsMessage.ContainerCommand) -> Unit)? = null,
     var onHostDeploy: (suspend (WsMessage.DeployCommand) -> Unit)? = null,
     var onDeployProgress: ((WsMessage.DeployProgress) -> Unit)? = null,
-    var onDeployResult: ((WsMessage.DeployResult) -> Unit)? = null
+    var onDeployResult: ((WsMessage.DeployResult) -> Unit)? = null,
+    var onHostLogSubscribe: ((containerId: String, tail: Int, sendChunk: suspend (List<String>) -> Unit) -> Unit)? = null,
+    var onHostLogUnsubscribe: ((containerId: String) -> Unit)? = null
 ) {
     private val previousContainerStates = mutableMapOf<String, Map<String, ContainerStatus>>()
     private val logger = LoggerFactory.getLogger(MessageHandler::class.java)
@@ -48,6 +50,8 @@ class MessageHandler(
             is WsMessage.ContainerCommand -> { handleRelayCommand(message); null }
             is WsMessage.ContainerProcessing -> { handleContainerProcessing(message); null }
             is WsMessage.LogChunk -> { handleLogChunk(message, wsSession); null }
+            is WsMessage.LogSubscribe -> { handleClientLogSubscribe(message, wsSession); null }
+            is WsMessage.LogUnsubscribe -> { handleClientLogUnsubscribe(message); null }
             is WsMessage.CommandResult -> { handleCommandResult(message); null }
             is WsMessage.DeployCommand -> { handleDeployCommand(message); null }
             is WsMessage.DeployResponse -> { logger.info("Deploy response: ${message.requestId} accepted=${message.accepted}"); null }
@@ -140,6 +144,8 @@ class MessageHandler(
     private val logCallbacks = mutableMapOf<String, (WsMessage.LogChunk) -> Unit>()
     // Tracks WebSocket-based log subscribers: containerId -> session
     private val logSubscribers = mutableMapOf<String, WebSocketSession>()
+    // Tracks client-requested log subscriptions: containerId -> requesting client session
+    private val logRequesterSessions = mutableMapOf<String, WebSocketSession>()
 
     private suspend fun handleLogChunk(logChunk: WsMessage.LogChunk, senderSession: WebSocketSession) {
         logger.debug("Log chunk from ${logChunk.nodeId} for container ${logChunk.containerId}: ${logChunk.lines.size} lines")
@@ -153,6 +159,79 @@ class MessageHandler(
             } catch (e: Exception) {
                 logger.warn("Failed to forward log chunk for container ${logChunk.containerId}", e)
                 logSubscribers.remove(logChunk.containerId)
+            }
+        }
+        // Forward to requesting client (client-initiated remote log viewing)
+        val requester = logRequesterSessions[logChunk.containerId]
+        if (requester != null) {
+            try {
+                requester.send(Frame.Text(AppJson.encodeToString<WsMessage>(logChunk)))
+            } catch (e: Exception) {
+                logger.warn("Failed to forward log chunk to requester for container ${logChunk.containerId}", e)
+                logRequesterSessions.remove(logChunk.containerId)
+            }
+        }
+    }
+
+    private suspend fun handleClientLogSubscribe(subscribe: WsMessage.LogSubscribe, requesterSession: WebSocketSession) {
+        val containerId = subscribe.containerId
+        val targetNodeId = subscribe.targetNodeId
+        if (targetNodeId == null) {
+            logger.warn("Client LogSubscribe missing targetNodeId for container $containerId")
+            return
+        }
+        logRequesterSessions[containerId] = requesterSession
+
+        if (targetNodeId.startsWith("host-")) {
+            val callback = onHostLogSubscribe
+            if (callback == null) {
+                logger.warn("No host log subscribe handler registered")
+                return
+            }
+            val sendChunk: suspend (List<String>) -> Unit = { lines ->
+                val chunk = WsMessage.LogChunk(nodeId = targetNodeId, containerId = containerId, lines = lines)
+                try {
+                    requesterSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(chunk)))
+                } catch (e: Exception) {
+                    logger.warn("Failed to send host log chunk to requester", e)
+                }
+            }
+            callback(containerId, subscribe.tail, sendChunk)
+            logger.info("Client subscribed to host logs: container=$containerId")
+            return
+        }
+
+        val session = nodeSessionManager.getSession(targetNodeId) ?: run {
+            logger.warn("Client LogSubscribe: target node not found: $targetNodeId")
+            logRequesterSessions.remove(containerId)
+            return
+        }
+        try {
+            session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(subscribe)))
+            logger.info("Relayed client LogSubscribe to node $targetNodeId for container $containerId")
+        } catch (e: Exception) {
+            logger.error("Failed to relay LogSubscribe to node $targetNodeId", e)
+            logRequesterSessions.remove(containerId)
+        }
+    }
+
+    private suspend fun handleClientLogUnsubscribe(unsubscribe: WsMessage.LogUnsubscribe) {
+        val containerId = unsubscribe.containerId
+        val targetNodeId = unsubscribe.targetNodeId
+        logRequesterSessions.remove(containerId)
+
+        if (targetNodeId != null && targetNodeId.startsWith("host-")) {
+            onHostLogUnsubscribe?.invoke(containerId)
+            logger.info("Client unsubscribed from host logs: container=$containerId")
+            return
+        }
+        if (targetNodeId != null) {
+            val session = nodeSessionManager.getSession(targetNodeId) ?: return
+            try {
+                session.wsSession.send(Frame.Text(AppJson.encodeToString<WsMessage>(unsubscribe)))
+                logger.info("Relayed client LogUnsubscribe to node $targetNodeId for container $containerId")
+            } catch (e: Exception) {
+                logger.error("Failed to relay LogUnsubscribe to node $targetNodeId", e)
             }
         }
     }
