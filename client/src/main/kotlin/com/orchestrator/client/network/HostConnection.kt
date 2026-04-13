@@ -129,7 +129,11 @@ class HostConnection(
                             when (frame) {
                                 is Frame.Text -> {
                                     val text = frame.readText()
-                                    clientMessageHandler.handleMessage(text)
+                                    try {
+                                        clientMessageHandler.handleMessage(text)
+                                    } catch (e: Exception) {
+                                        logger.error("Client handleMessage failed: ${e.message}", e)
+                                    }
                                     // Only reset reconnect counter after receiving real data
                                     reconnectAttempts = 0
                                 }

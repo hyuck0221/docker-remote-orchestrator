@@ -72,6 +72,7 @@ class AppViewModel(private val scope: CoroutineScope) {
     private var localDeployer: ContainerDeployer? = null
     private var localContainerService: ContainerService? = null
     private var hostNodeId: String? = null
+    private var hostPortValue: Int = 9090
     val selfNodeId: String? get() = hostNodeId ?: clientNodeId
 
     // Client mode
@@ -171,9 +172,19 @@ class AppViewModel(private val scope: CoroutineScope) {
     // ── Host Mode ──
 
     fun startHost(port: Int = 9090, restoreCode: String? = null, enableNgrok: Boolean = false) {
+        // Guard: a previous startHost may still be running or already established.
+        // Without this, a second call creates a fresh HostCodeManager and updates
+        // hostCodeManagerRef + _hostCode, while the already-running embedded server
+        // keeps validating against the PREVIOUS HostCodeManager — producing the
+        // exact symptom "dashboard shows code X but server rejects X as invalid".
+        if (_role.value == AppRole.HOST || serverEngine != null) {
+            logger.warn("startHost ignored: host already running (role=${_role.value})")
+            return
+        }
         scope.launch(Dispatchers.IO) {
             try {
                 _statusMessage.value = "Starting server..."
+                hostPortValue = port
                 val config = ServerConfig(port = port)
                 val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                 val hostCodeMgr = HostCodeManager()
@@ -185,6 +196,7 @@ class AppViewModel(private val scope: CoroutineScope) {
                 nodeSessionManager = nodeSessionMgr
                 messageHandler = msgHandler
                 dashboardAggregator = dashboardAgg
+                hostCodeManagerRef = hostCodeMgr
 
                 // Handle commands from clients targeting the host node
                 msgHandler.onHostCommand = { command ->
@@ -238,10 +250,20 @@ class AppViewModel(private val scope: CoroutineScope) {
                     hostLogStreamJobs.remove(containerId)?.cancel()
                 }
 
-                val code = if (!restoreCode.isNullOrEmpty()) {
-                    hostCodeMgr.restoreCode(restoreCode)
-                } else {
-                    hostCodeMgr.generateCode()
+                val userSettings = AppStateManager.loadUserSettings()
+                val persistedCode = userSettings.savedHostCode
+                val code = when {
+                    !restoreCode.isNullOrEmpty() -> hostCodeMgr.restoreCode(restoreCode)
+                    persistedCode.isNotEmpty() -> hostCodeMgr.restoreCode(persistedCode)
+                    else -> {
+                        val generated = hostCodeMgr.generateCode()
+                        AppStateManager.saveUserSettings(userSettings.copy(savedHostCode = generated))
+                        generated
+                    }
+                }
+                // Ensure the code used is also persisted (covers restoreCode path when settings were empty).
+                if (userSettings.savedHostCode != code) {
+                    AppStateManager.saveUserSettings(userSettings.copy(savedHostCode = code))
                 }
                 _hostCode.value = code
 
@@ -311,10 +333,11 @@ class AppViewModel(private val scope: CoroutineScope) {
                 _currentScreen.value = AppScreen.HOST_DASHBOARD
                 _statusMessage.value = "Server running on port $port"
 
-                // Save state for persistence
+                // Save state for persistence (preserve user settings — includes savedHostCode)
                 AppStateManager.save(AppState(
                     role = "HOST",
-                    hostConfig = HostConfig(port = port, hostCode = code, enableNgrok = enableNgrok)
+                    hostConfig = HostConfig(port = port, hostCode = code, enableNgrok = enableNgrok),
+                    userSettings = AppStateManager.loadUserSettings()
                 ))
 
                 // Poll connected nodes
@@ -331,6 +354,19 @@ class AppViewModel(private val scope: CoroutineScope) {
                     // Replace remote-sourced processing with current server state
                     // Keep locally-initiated processing, sync remote processing
                     _processingContainers.value = (_processingContainers.value intersect _localProcessing) + remoteProcessing
+
+                    // Self-heal: if the displayed code ever diverges from what
+                    // HostCodeManager actually validates against, force-sync so
+                    // the dashboard and the token both reflect the truth.
+                    val actualCode = hostCodeMgr.getActiveCode()
+                    if (actualCode != null && actualCode != _hostCode.value) {
+                        logger.warn("hostCode desync detected: flow='${_hostCode.value}' mgr='$actualCode' — resyncing to mgr")
+                        _hostCode.value = actualCode
+                        val s = AppStateManager.loadUserSettings()
+                        if (s.savedHostCode != actualCode) {
+                            AppStateManager.saveUserSettings(s.copy(savedHostCode = actualCode))
+                        }
+                    }
                     delay(2000)
                 }
             } catch (e: Exception) {
@@ -373,6 +409,7 @@ class AppViewModel(private val scope: CoroutineScope) {
         localContainerService = null
         localLogStreamer = null
         dashboardAggregator = null
+        hostCodeManagerRef = null
         hostNodeId = null
         serverEngine?.stop(1000, 2000)
         serverEngine = null
@@ -384,6 +421,102 @@ class AppViewModel(private val scope: CoroutineScope) {
         _statusMessage.value = "Server stopped"
         AppStateManager.clear()
     }
+
+    /**
+     * Best-effort detection of this machine's primary LAN IPv4 address.
+     * Uses the classic UDP-connect trick: open a datagram socket, "connect" it
+     * to a public IP (no packets sent), and read which local address the OS
+     * chose as the source. This picks the interface that would route to the
+     * internet, which is almost always the right answer for LAN peers too.
+     */
+    private fun detectPrimaryLanAddress(): String {
+        // Try the UDP-connect trick first — most reliable cross-platform.
+        try {
+            java.net.DatagramSocket().use { socket ->
+                socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 10002)
+                val addr = socket.localAddress
+                if (addr is java.net.Inet4Address && !addr.isLoopbackAddress && !addr.isAnyLocalAddress) {
+                    return addr.hostAddress
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback: walk interfaces and skip common virtual ones (docker, utun, vbox, vmnet, br-*).
+        try {
+            val bad = listOf("docker", "br-", "utun", "tun", "tap", "vbox", "vmnet", "vnic", "veth", "zt")
+            val candidates = java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .filter { iface -> bad.none { iface.name.lowercase().startsWith(it) } }
+                .flatMap { it.inetAddresses.toList() }
+                .filterIsInstance<java.net.Inet4Address>()
+                .filter { !it.isLoopbackAddress && !it.isLinkLocalAddress }
+            if (candidates.isNotEmpty()) return candidates.first().hostAddress
+        } catch (_: Exception) {}
+
+        return try { java.net.InetAddress.getLocalHost().hostAddress } catch (_: Exception) { "127.0.0.1" }
+    }
+
+    /**
+     * Build a single-line connection token that encodes host address + port + code.
+     * If ngrok tunnel is active, uses the tunnel URL; otherwise falls back to the
+     * primary non-loopback IPv4 address of this machine.
+     * Returns null when the host isn't running.
+     */
+    fun buildConnectionToken(): String? {
+        if (_role.value != AppRole.HOST) return null
+        val code = _hostCode.value.ifBlank { return null }
+        val tunnel = _tunnelUrl.value
+        val (host, port) = if (!tunnel.isNullOrBlank() && _tunnelState.value == TunnelState.RUNNING) {
+            val stripped = tunnel.removePrefix("https://").removePrefix("http://").removeSuffix("/")
+            // ngrok HTTPS tunnels always target port 443
+            stripped to 443
+        } else {
+            val addr = detectPrimaryLanAddress()
+            addr to hostPortValue
+        }
+        val token = com.orchestrator.common.util.ConnectionToken.encode(host, port, code)
+        val activeInMgr = hostCodeManagerRef?.getActiveCode()
+        logger.info("buildConnectionToken: host='$host' port=$port flowCode='$code' mgrActive='$activeInMgr' token='${token.take(40)}...'")
+        return token
+    }
+
+    /**
+     * Decode a connection token and initiate client connection.
+     * Returns true if the token was valid and a connect attempt was started.
+     */
+    fun connectWithToken(token: String): Boolean {
+        val info = com.orchestrator.common.util.ConnectionToken.decode(token) ?: run {
+            logger.warn("connectWithToken: decode failed for token='${token.take(40)}...'")
+            return false
+        }
+        logger.info("connectWithToken: decoded host='${info.host}' port=${info.port} code='${info.code}'")
+        _statusMessage.value = "Token → ${info.host}:${info.port} (${info.code})"
+        connectToHost(info.host, info.port, info.code)
+        return true
+    }
+
+    fun regenerateHostCode(): String {
+        val newCode = com.orchestrator.common.util.HostCodeGenerator.generate()
+        val settings = AppStateManager.loadUserSettings()
+        AppStateManager.saveUserSettings(settings.copy(savedHostCode = newCode))
+
+        if (_role.value == AppRole.HOST) {
+            val oldCode = _hostCode.value
+            _hostCode.value = newCode
+            hostCodeManagerRef?.let { mgr ->
+                if (oldCode.isNotEmpty()) mgr.revokeCode(oldCode)
+                mgr.restoreCode(newCode)
+            }
+            val currentState = AppStateManager.load()
+            currentState.hostConfig?.let { cfg ->
+                AppStateManager.save(currentState.copy(hostConfig = cfg.copy(hostCode = newCode)))
+            }
+        }
+        return newCode
+    }
+
+    // Held while host is running so we can update the active HostCodeManager on regenerate.
+    private var hostCodeManagerRef: com.orchestrator.server.session.HostCodeManager? = null
 
     fun updateNodePermission(nodeId: String, permission: Permission) {
         _connectedNodes.value = _connectedNodes.value.toMutableMap().apply {
@@ -701,10 +834,11 @@ class AppViewModel(private val scope: CoroutineScope) {
                 _currentScreen.value = AppScreen.CLIENT_CONNECT
                 _statusMessage.value = "Connected to server"
 
-                // Save state for persistence
+                // Save state for persistence (preserve user settings)
                 AppStateManager.save(AppState(
                     role = "CLIENT",
-                    clientConfig = ClientConfig(serverHost = serverHost, serverPort = serverPort, hostCode = hostCode)
+                    clientConfig = ClientConfig(serverHost = serverHost, serverPort = serverPort, hostCode = hostCode),
+                    userSettings = AppStateManager.loadUserSettings()
                 ))
             } catch (e: Exception) {
                 _statusMessage.value = "Connection failed: ${e.message}"

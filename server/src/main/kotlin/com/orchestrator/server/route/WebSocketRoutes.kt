@@ -24,9 +24,16 @@ fun Route.webSocketRoutes(
                 when (frame) {
                     is Frame.Text -> {
                         val text = frame.readText()
-                        val nodeId = messageHandler.handleMessage(text, this)
-                        if (nodeId != null && trackedNodeId == null) {
-                            trackedNodeId = nodeId
+                        // Isolate per-message exceptions so one bad payload
+                        // doesn't kill the whole session (which would trigger
+                        // the client reconnect loop and make nodes "flicker").
+                        try {
+                            val nodeId = messageHandler.handleMessage(text, this)
+                            if (nodeId != null && trackedNodeId == null) {
+                                trackedNodeId = nodeId
+                            }
+                        } catch (e: Exception) {
+                            logger.error("handleMessage failed for node=$trackedNodeId payload=${text.take(200)}", e)
                         }
                     }
                     is Frame.Close -> {

@@ -18,7 +18,8 @@ data class AppState(
 data class UserSettings(
     val displayName: String = "",
     val autoStart: Boolean = false,
-    val language: String = "EN"
+    val language: String = "EN",
+    val savedHostCode: String = ""
 )
 
 @Serializable
@@ -45,8 +46,16 @@ object AppStateManager {
     fun save(state: AppState) {
         try {
             stateDir.mkdirs()
-            stateFile.writeText(json.encodeToString(state))
-            logger.info("State saved: role=${state.role}")
+            // Defensive: if the caller passed the default UserSettings, preserve whatever
+            // is already on disk so we don't accidentally wipe persisted fields like
+            // savedHostCode. Callers that intentionally mutate settings should go through
+            // saveUserSettings() or pass a non-default UserSettings explicitly.
+            val merged = if (state.userSettings == UserSettings()) {
+                val existing = runCatching { load().userSettings }.getOrElse { UserSettings() }
+                state.copy(userSettings = existing)
+            } else state
+            stateFile.writeText(json.encodeToString(merged))
+            logger.info("State saved: role=${merged.role}")
         } catch (e: Exception) {
             logger.warn("Failed to save state: ${e.message}")
         }

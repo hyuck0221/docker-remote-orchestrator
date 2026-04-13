@@ -76,6 +76,22 @@ interface Strings {
     val addressPlaceholder: String
     val ngrokDetected: String
     val hostCode: String
+    val connectionToken: String
+    val connectionTokenPlaceholder: String
+    val connectionTokenInvalid: String
+    val manualEntry: String
+
+    // ── Connection Token (Host) ──
+    val inviteToken: String
+    val inviteTokenDesc: String
+    val copyInviteToken: String
+    val tokenCopied: String
+
+    // ── Host Code Settings ──
+    val hostCodeSection: String
+    val hostCodeDesc: String
+    val regenerateCode: String
+    val regenerateCodeConfirm: String
 
     // ── Tabs ──
     val tabMyNode: String
@@ -263,6 +279,18 @@ object EnStrings : Strings {
     override val addressPlaceholder = "localhost or xxxx.ngrok-free.app"
     override val ngrokDetected = "ngrok detected - port will be set automatically"
     override val hostCode = "Host Code"
+    override val connectionToken = "Connection Token"
+    override val connectionTokenPlaceholder = "Paste the token shared by your host"
+    override val connectionTokenInvalid = "Invalid token"
+    override val manualEntry = "Enter manually"
+    override val inviteToken = "Invite Token"
+    override val inviteTokenDesc = "Share this single string with clients — it contains address, port and code."
+    override val copyInviteToken = "Copy Token"
+    override val tokenCopied = "Token copied"
+    override val hostCodeSection = "Host Code"
+    override val hostCodeDesc = "Your persistent room code. Regenerate to invalidate old invites."
+    override val regenerateCode = "Regenerate"
+    override val regenerateCodeConfirm = "A new code was generated."
 
     // ── Tabs ──
     override val tabMyNode = "My Node"
@@ -450,6 +478,18 @@ object KoStrings : Strings {
     override val addressPlaceholder = "localhost 또는 xxxx.ngrok-free.app"
     override val ngrokDetected = "ngrok이 감지되었습니다 - 포트가 자동으로 설정됩니다"
     override val hostCode = "호스트 코드"
+    override val connectionToken = "연결 토큰"
+    override val connectionTokenPlaceholder = "호스트가 공유한 토큰을 붙여넣으세요"
+    override val connectionTokenInvalid = "잘못된 토큰입니다"
+    override val manualEntry = "수동 입력"
+    override val inviteToken = "초대 토큰"
+    override val inviteTokenDesc = "주소·포트·코드가 모두 포함된 한 줄 토큰입니다. 클라이언트에 공유하세요."
+    override val copyInviteToken = "토큰 복사"
+    override val tokenCopied = "토큰 복사됨"
+    override val hostCodeSection = "호스트 코드"
+    override val hostCodeDesc = "저장되어 재사용되는 방 코드입니다. 재생성하면 기존 초대는 무효가 됩니다."
+    override val regenerateCode = "재생성"
+    override val regenerateCodeConfirm = "새 코드가 생성되었습니다."
 
     // ── Tabs ──
     override val tabMyNode = "내 노드"

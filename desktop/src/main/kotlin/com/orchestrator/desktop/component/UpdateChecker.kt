@@ -208,15 +208,44 @@ suspend fun downloadUpdateFile(
 }
 
 fun launchInstallerAndExit(file: File) {
-    try {
-        if (Desktop.isDesktopSupported()) {
-            Desktop.getDesktop().open(file)
+    val os = System.getProperty("os.name", "").lowercase()
+    val launched = try {
+        when {
+            os.contains("win") -> {
+                // Inno Setup silent flags: install without user interaction but show progress,
+                // force-close any running DRO instance, and relaunch after install.
+                // We spawn via cmd "start" so the installer survives after this process exits.
+                val command = listOf(
+                    "cmd.exe", "/c", "start", "\"DRO Updater\"", "/B",
+                    file.absolutePath,
+                    "/SILENT",
+                    "/CLOSEAPPLICATIONS",
+                    "/RESTARTAPPLICATIONS",
+                    "/NORESTART"
+                )
+                ProcessBuilder(command).inheritIO().start()
+                true
+            }
+            os.contains("mac") -> {
+                // On macOS updates are typically .dmg — let Finder handle it.
+                Desktop.getDesktop().open(file); true
+            }
+            else -> {
+                Desktop.getDesktop().open(file); true
+            }
         }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+        // Fallback: try generic Desktop.open; if that also fails, bail out without exiting.
+        try {
+            if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file)
+            true
+        } catch (_: Exception) { false }
+    }
+    if (!launched) return
     // Give the OS a brief moment to spawn the installer process before we exit,
     // so file handles on the executable are released for overwrite.
     Thread {
-        try { Thread.sleep(500) } catch (_: Exception) {}
+        try { Thread.sleep(1500) } catch (_: Exception) {}
         exitProcess(0)
     }.start()
 }

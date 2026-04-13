@@ -23,7 +23,14 @@ class HostCodeManager {
     }
 
     fun validateCode(code: String): Boolean {
-        return activeCodes.containsKey(code)
+        val normalized = code.trim()
+        if (activeCodes.containsKey(normalized)) return true
+        // Case-insensitive fallback — host codes are always stored uppercase but
+        // be lenient with user input/copy artifacts.
+        val upper = normalized.uppercase()
+        if (activeCodes.containsKey(upper)) return true
+        logger.warn("validateCode failed: received='$code' active=${activeCodes.keys}")
+        return false
     }
 
     fun revokeCode(code: String) {

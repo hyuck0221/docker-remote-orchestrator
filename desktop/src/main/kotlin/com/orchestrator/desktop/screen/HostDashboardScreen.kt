@@ -119,6 +119,27 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
+                        var tokenCopied by remember { mutableStateOf(false) }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = AccentTeal.copy(alpha = 0.08f),
+                            onClick = {
+                                viewModel.buildConnectionToken()?.let { token ->
+                                    java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                                        .setContents(java.awt.datatransfer.StringSelection(token), null)
+                                    tokenCopied = true
+                                }
+                            }
+                        ) {
+                            Text(
+                                if (tokenCopied) s.tokenCopied else s.copyInviteToken,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = AccentTeal
+                            )
+                        }
+                        LaunchedEffect(tokenCopied) { if (tokenCopied) { kotlinx.coroutines.delay(2000); tokenCopied = false } }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(shape = RoundedCornerShape(6.dp), color = StatusRunning.copy(alpha = 0.08f)) {
                             Text(s.nodesCount(connectedNodes.size), modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = StatusRunning)
                         }

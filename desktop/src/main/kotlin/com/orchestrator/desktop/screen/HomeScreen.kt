@@ -75,6 +75,7 @@ fun HomeScreen(viewModel: AppViewModel) {
 
             Button(
                 onClick = { showHostDialog = true },
+                enabled = role == AppRole.NONE,
                 modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
@@ -90,6 +91,7 @@ fun HomeScreen(viewModel: AppViewModel) {
 
             OutlinedButton(
                 onClick = { showClientDialog = true },
+                enabled = role == AppRole.NONE,
                 modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = RoundedCornerShape(8.dp),
                 border = ButtonDefaults.outlinedButtonBorder(true).copy(
@@ -261,47 +263,96 @@ fun HomeScreen(viewModel: AppViewModel) {
             title = s.connectToHost,
             onDismiss = { showClientDialog = false }
         ) {
+            var manualMode by remember { mutableStateOf(false) }
+            var token by remember { mutableStateOf("") }
+            var tokenError by remember { mutableStateOf(false) }
             var host by remember { mutableStateOf("localhost") }
             var port by remember { mutableStateOf("9090") }
             var code by remember { mutableStateOf("") }
-            val isNgrok = NgrokTunnel.isNgrokUrl(host)
 
-            OutlinedTextField(
-                value = host, onValueChange = { host = it.trim() },
-                label = { Text(if (isNgrok) s.ngrokUrl else s.address) },
-                placeholder = { Text(s.addressPlaceholder) },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
-            if (isNgrok) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    s.ngrokDetected,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSubtle
+            if (!manualMode) {
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it.trim(); tokenError = false },
+                    label = { Text(s.connectionToken) },
+                    placeholder = { Text(s.connectionTokenPlaceholder) },
+                    singleLine = true,
+                    isError = tokenError,
+                    modifier = Modifier.fillMaxWidth()
                 )
+                // Live preview of decoded values so the user can verify host/port/code match the host.
+                val preview = remember(token) {
+                    if (token.isNotBlank()) com.orchestrator.common.util.ConnectionToken.decode(token) else null
+                }
+                if (preview != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "→ ${preview.host}:${preview.port}  ·  ${preview.code}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSubtle,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+                if (tokenError) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(s.connectionTokenInvalid, style = MaterialTheme.typography.bodySmall, color = StatusExited)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = { manualMode = true }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text(s.manualEntry, style = MaterialTheme.typography.labelSmall, color = TextSubtle)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        if (viewModel.connectWithToken(token)) {
+                            showClientDialog = false
+                        } else {
+                            tokenError = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = token.isNotBlank()
+                ) { Text(s.connect) }
             } else {
+                val isNgrok = NgrokTunnel.isNgrokUrl(host)
+                OutlinedTextField(
+                    value = host, onValueChange = { host = it.trim() },
+                    label = { Text(if (isNgrok) s.ngrokUrl else s.address) },
+                    placeholder = { Text(s.addressPlaceholder) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                if (isNgrok) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(s.ngrokDetected, style = MaterialTheme.typography.bodySmall, color = TextSubtle)
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = port, onValueChange = { port = it.filter { c -> c.isDigit() } },
+                        label = { Text(s.port) }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = port, onValueChange = { port = it.filter { c -> c.isDigit() } },
-                    label = { Text(s.port) }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    value = code, onValueChange = { code = it.uppercase().take(8) },
+                    label = { Text(s.hostCode) }, singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = { manualMode = false }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text(s.connectionToken, style = MaterialTheme.typography.labelSmall, color = TextSubtle)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        showClientDialog = false
+                        val connectPort = if (isNgrok) 443 else (port.toIntOrNull() ?: 9090)
+                        viewModel.connectToHost(host, connectPort, code)
+                    },
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = code.length == 8
+                ) { Text(s.connect) }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = code, onValueChange = { code = it.uppercase().take(8) },
-                label = { Text(s.hostCode) }, singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    showClientDialog = false
-                    val connectPort = if (isNgrok) 443 else (port.toIntOrNull() ?: 9090)
-                    viewModel.connectToHost(host, connectPort, code)
-                },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                shape = RoundedCornerShape(8.dp),
-                enabled = code.length == 8
-            ) { Text(s.connect) }
         }
     }
 }
