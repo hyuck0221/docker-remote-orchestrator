@@ -20,7 +20,6 @@ import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.ContainerStatus
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
-import com.orchestrator.common.tunnel.TunnelState
 import com.orchestrator.desktop.component.*
 import com.orchestrator.desktop.i18n.LocalStrings
 import com.orchestrator.desktop.theme.*
@@ -35,9 +34,7 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
     val processing by viewModel.processingContainers.collectAsState()
     val logOutput by viewModel.logOutput.collectAsState()
     val logName by viewModel.logContainerName.collectAsState()
-    val tunnelState by viewModel.tunnelState.collectAsState()
-    val tunnelUrl by viewModel.tunnelUrl.collectAsState()
-    val tunnelError by viewModel.tunnelError.collectAsState()
+    val tailscaleUrl by viewModel.tailscaleUrl.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var logExpanded by remember { mutableStateOf(false) }
 
@@ -75,21 +72,14 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                         }
                         LaunchedEffect(codeCopied) { if (codeCopied) { kotlinx.coroutines.delay(2000); codeCopied = false } }
 
-                        // Ngrok tunnel URL
-                        if (tunnelState != TunnelState.STOPPED) {
+                        if (!tailscaleUrl.isNullOrBlank()) {
                             Spacer(modifier = Modifier.width(8.dp))
                             var urlCopied by remember { mutableStateOf(false) }
-                            val tunnelColor = when (tunnelState) {
-                                TunnelState.RUNNING -> AccentTeal
-                                TunnelState.STARTING -> StatusPaused
-                                TunnelState.ERROR -> StatusExited
-                                TunnelState.STOPPED -> TextMuted
-                            }
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = tunnelColor.copy(alpha = 0.08f),
+                                color = AccentTeal.copy(alpha = 0.08f),
                                 onClick = {
-                                    tunnelUrl?.let { url ->
+                                    tailscaleUrl?.let { url ->
                                         java.awt.Toolkit.getDefaultToolkit().systemClipboard
                                             .setContents(java.awt.datatransfer.StringSelection(url), null)
                                         urlCopied = true
@@ -102,14 +92,9 @@ fun HostDashboardScreen(viewModel: AppViewModel) {
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Text(
-                                        when {
-                                            urlCopied -> "COPIED"
-                                            tunnelState == TunnelState.STARTING -> "TUNNEL..."
-                                            tunnelState == TunnelState.ERROR -> tunnelError?.take(30) ?: "ERROR"
-                                            else -> tunnelUrl?.removePrefix("https://") ?: ""
-                                        },
+                                        if (urlCopied) "COPIED" else tailscaleUrl?.removePrefix("http://") ?: "",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = tunnelColor,
+                                        color = AccentTeal,
                                         fontFamily = FontFamily.Monospace,
                                         maxLines = 1
                                     )

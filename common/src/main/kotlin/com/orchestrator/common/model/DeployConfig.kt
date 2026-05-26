@@ -10,5 +10,14 @@ data class DeployConfig(
     val env: List<String> = emptyList(),
     val volumes: List<String> = emptyList(),
     val restartPolicy: String = "no",
-    val labels: Map<String, String> = emptyMap()
+    val labels: Map<String, String> = emptyMap(),
+    val imageTransfer: ImageTransfer? = null
+)
+
+@Serializable
+data class ImageTransfer(
+    val fileName: String,
+    val image: String,
+    val url: String? = null,
+    val taildrop: Boolean = false
 )

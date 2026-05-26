@@ -46,35 +46,11 @@ interface Strings {
     // ── Host Dialog ──
     val startHost: String
     val port: String
-    val externalAccess: String
-    val allowExternalConnections: String
-    val ngrokNotInstalled: String
-    val ngrokNotConfigured: String
-    val checkingNgrok: String
-    val setup: String
-
-    // ── ngrok Setup Dialog ──
-    val ngrokSetup: String
-    val ngrokNotInstalledDesc: String
-    val installSteps: String
-    val orDownloadFrom: String
-    val afterInstallingReopen: String
-    val ngrokNeedsToken: String
-    val ngrokTokenInstructions: String
-    val authToken: String
-    val tokenSaved: String
-    val tokenSaveFailed: String
-    val ngrokReady: String
-    val checkingNgrokStatus: String
-    val saveToken: String
-    val saving: String
 
     // ── Client Dialog ──
     val connectToHost: String
     val address: String
-    val ngrokUrl: String
     val addressPlaceholder: String
-    val ngrokDetected: String
     val hostCode: String
     val connectionToken: String
     val connectionTokenPlaceholder: String
@@ -249,35 +225,11 @@ object EnStrings : Strings {
     // ── Host Dialog ──
     override val startHost = "Start Host"
     override val port = "Port"
-    override val externalAccess = "External Access (ngrok)"
-    override val allowExternalConnections = "Allow connections from outside your network"
-    override val ngrokNotInstalled = "ngrok not installed"
-    override val ngrokNotConfigured = "ngrok auth token not set"
-    override val checkingNgrok = "Checking ngrok..."
-    override val setup = "Setup"
-
-    // ── ngrok Setup Dialog ──
-    override val ngrokSetup = "ngrok Setup"
-    override val ngrokNotInstalledDesc = "ngrok is not installed."
-    override val installSteps = "Install steps:"
-    override val orDownloadFrom = "Or download from https://ngrok.com/download"
-    override val afterInstallingReopen = "After installing, reopen this dialog."
-    override val ngrokNeedsToken = "ngrok is installed but needs an auth token."
-    override val ngrokTokenInstructions = "1. Sign up at https://ngrok.com\n2. Copy your authtoken from the dashboard\n3. Paste it below:"
-    override val authToken = "Auth Token"
-    override val tokenSaved = "Token saved successfully!"
-    override val tokenSaveFailed = "Failed to save token."
-    override val ngrokReady = "ngrok is ready to use!"
-    override val checkingNgrokStatus = "Checking ngrok status..."
-    override val saveToken = "Save Token"
-    override val saving = "Saving..."
 
     // ── Client Dialog ──
     override val connectToHost = "Connect to Host"
     override val address = "Address"
-    override val ngrokUrl = "ngrok URL"
-    override val addressPlaceholder = "localhost or xxxx.ngrok-free.app"
-    override val ngrokDetected = "ngrok detected - port will be set automatically"
+    override val addressPlaceholder = "localhost or MagicDNS name"
     override val hostCode = "Host Code"
     override val connectionToken = "Connection Token"
     override val connectionTokenPlaceholder = "Paste the token shared by your host"
@@ -448,35 +400,11 @@ object KoStrings : Strings {
     // ── Host Dialog ──
     override val startHost = "호스트 시작"
     override val port = "포트"
-    override val externalAccess = "외부 접속 (ngrok)"
-    override val allowExternalConnections = "네트워크 외부에서의 연결을 허용합니다"
-    override val ngrokNotInstalled = "ngrok이 설치되지 않음"
-    override val ngrokNotConfigured = "ngrok 인증 토큰이 설정되지 않음"
-    override val checkingNgrok = "ngrok 확인 중..."
-    override val setup = "설정"
-
-    // ── ngrok Setup Dialog ──
-    override val ngrokSetup = "ngrok 설정"
-    override val ngrokNotInstalledDesc = "ngrok이 설치되어 있지 않습니다."
-    override val installSteps = "설치 방법:"
-    override val orDownloadFrom = "또는 https://ngrok.com/download 에서 다운로드하세요"
-    override val afterInstallingReopen = "설치 후 이 대화창을 다시 여세요."
-    override val ngrokNeedsToken = "ngrok이 설치되어 있지만 인증 토큰이 필요합니다."
-    override val ngrokTokenInstructions = "1. https://ngrok.com 에서 가입하세요\n2. 대시보드에서 인증 토큰을 복사하세요\n3. 아래에 붙여넣으세요:"
-    override val authToken = "인증 토큰"
-    override val tokenSaved = "토큰이 성공적으로 저장되었습니다!"
-    override val tokenSaveFailed = "토큰 저장에 실패했습니다."
-    override val ngrokReady = "ngrok을 사용할 준비가 되었습니다!"
-    override val checkingNgrokStatus = "ngrok 상태 확인 중..."
-    override val saveToken = "토큰 저장"
-    override val saving = "저장 중..."
 
     // ── Client Dialog ──
     override val connectToHost = "호스트에 연결"
     override val address = "주소"
-    override val ngrokUrl = "ngrok URL"
-    override val addressPlaceholder = "localhost 또는 xxxx.ngrok-free.app"
-    override val ngrokDetected = "ngrok이 감지되었습니다 - 포트가 자동으로 설정됩니다"
+    override val addressPlaceholder = "localhost 또는 MagicDNS 이름"
     override val hostCode = "호스트 코드"
     override val connectionToken = "연결 토큰"
     override val connectionTokenPlaceholder = "호스트가 공유한 토큰을 붙여넣으세요"

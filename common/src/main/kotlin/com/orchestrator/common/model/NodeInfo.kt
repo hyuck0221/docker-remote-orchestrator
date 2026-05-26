@@ -10,5 +10,7 @@ data class NodeInfo(
     val dockerVersion: String,
     val containers: List<ContainerInfo> = emptyList(),
     val permission: Permission = Permission.READ_ONLY,
-    val connectedAt: Long = System.currentTimeMillis()
+    val connectedAt: Long = System.currentTimeMillis(),
+    val tailscaleName: String? = null,
+    val tailscaleIp: String? = null
 )

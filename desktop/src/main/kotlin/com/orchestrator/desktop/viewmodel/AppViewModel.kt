@@ -7,13 +7,14 @@ import com.orchestrator.client.network.HostConnection
 import com.orchestrator.client.permission.PermissionManager
 import com.orchestrator.common.model.ContainerInfo
 import com.orchestrator.common.model.DeployConfig
+import com.orchestrator.common.model.ImageTransfer
 import com.orchestrator.common.model.NodeInfo
 import com.orchestrator.common.model.Permission
+import com.orchestrator.common.network.Tailscale
+import com.orchestrator.common.network.TailscaleStatus
 import com.orchestrator.common.protocol.DeployMode
 import com.orchestrator.common.protocol.WsMessage
 import com.orchestrator.desktop.i18n.AppLanguage
-import com.orchestrator.common.tunnel.NgrokTunnel
-import com.orchestrator.common.tunnel.TunnelState
 import com.orchestrator.common.util.AppState
 import com.orchestrator.common.util.AppStateManager
 import com.orchestrator.common.util.HostConfig
@@ -36,12 +37,15 @@ import io.ktor.server.websocket.*
 import com.orchestrator.common.util.AppJson
 import com.orchestrator.server.route.apiRoutes
 import com.orchestrator.server.route.webSocketRoutes
+import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
 enum class AppScreen { HOME, HOST_DASHBOARD, CLIENT_CONNECT, SETTINGS }
@@ -71,6 +75,7 @@ class AppViewModel(private val scope: CoroutineScope) {
     private var localCommandExecutor: ContainerCommandExecutor? = null
     private var localDeployer: ContainerDeployer? = null
     private var localContainerService: ContainerService? = null
+    private var localDockerClient: com.github.dockerjava.api.DockerClient? = null
     private var hostNodeId: String? = null
     private var hostPortValue: Int = 9090
     val selfNodeId: String? get() = hostNodeId ?: clientNodeId
@@ -94,14 +99,11 @@ class AppViewModel(private val scope: CoroutineScope) {
     // Track locally-initiated processing to distinguish from remote
     private val _localProcessing = mutableSetOf<String>()
 
-    // Ngrok tunnel
-    private var ngrokTunnel: NgrokTunnel? = null
-    private val _tunnelState = MutableStateFlow(TunnelState.STOPPED)
-    val tunnelState: StateFlow<TunnelState> = _tunnelState.asStateFlow()
-    private val _tunnelUrl = MutableStateFlow<String?>(null)
-    val tunnelUrl: StateFlow<String?> = _tunnelUrl.asStateFlow()
-    private val _tunnelError = MutableStateFlow<String?>(null)
-    val tunnelError: StateFlow<String?> = _tunnelError.asStateFlow()
+    private val _tailscaleStatus = MutableStateFlow<TailscaleStatus?>(null)
+    val tailscaleStatus: StateFlow<TailscaleStatus?> = _tailscaleStatus.asStateFlow()
+    private val _tailscaleUrl = MutableStateFlow<String?>(null)
+    val tailscaleUrl: StateFlow<String?> = _tailscaleUrl.asStateFlow()
+    private val imageTransferServer = ImageTransferServer()
 
     // Server settings
     private val _defaultPermission = MutableStateFlow(Permission.READ_ONLY)
@@ -156,8 +158,8 @@ class AppViewModel(private val scope: CoroutineScope) {
             val state = AppStateManager.load()
             when (state.role) {
                 "HOST" -> state.hostConfig?.let { config ->
-                    logger.info("Restoring host session: code=${config.hostCode} port=${config.port} ngrok=${config.enableNgrok}")
-                    startHost(config.port, config.hostCode, enableNgrok = config.enableNgrok)
+                    logger.info("Restoring host session: code=${config.hostCode} port=${config.port}")
+                    startHost(config.port, config.hostCode)
                 }
                 "CLIENT" -> state.clientConfig?.let { config ->
                     logger.info("Restoring client session: ${config.serverHost}:${config.serverPort}")
@@ -171,7 +173,7 @@ class AppViewModel(private val scope: CoroutineScope) {
 
     // ── Host Mode ──
 
-    fun startHost(port: Int = 9090, restoreCode: String? = null, enableNgrok: Boolean = false) {
+    fun startHost(port: Int = 9090, restoreCode: String? = null) {
         // Guard: a previous startHost may still be running or already established.
         // Without this, a second call creates a fresh HostCodeManager and updates
         // hostCodeManagerRef + _hostCode, while the already-running embedded server
@@ -185,6 +187,7 @@ class AppViewModel(private val scope: CoroutineScope) {
             try {
                 _statusMessage.value = "Starting server..."
                 hostPortValue = port
+                refreshTailscale(port)
                 val config = ServerConfig(port = port)
                 val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                 val hostCodeMgr = HostCodeManager()
@@ -286,6 +289,7 @@ class AppViewModel(private val scope: CoroutineScope) {
                 var hostInfo: NodeInfo? = null
                 try {
                     val dockerClient = DockerClientFactory.create()
+                    localDockerClient = dockerClient
                     val containerService = ContainerService(dockerClient)
                     localContainerService = containerService
                     localCommandExecutor = ContainerCommandExecutor(dockerClient)
@@ -306,7 +310,9 @@ class AppViewModel(private val scope: CoroutineScope) {
                         os = System.getProperty("os.name", "unknown"),
                         dockerVersion = containerService.getDockerVersion(),
                         containers = containerService.listContainers(),
-                        permission = Permission.FULL_CONTROL
+                        permission = Permission.FULL_CONTROL,
+                        tailscaleName = _tailscaleStatus.value?.reachableName,
+                        tailscaleIp = _tailscaleStatus.value?.ipv4
                     )
                     dashboardAgg.setHostNode(nodeId, hostInfo)
 
@@ -324,11 +330,6 @@ class AppViewModel(private val scope: CoroutineScope) {
                     logger.warn("Could not start local Docker monitoring: ${e.message}")
                 }
 
-                // Start ngrok tunnel if enabled
-                if (enableNgrok) {
-                    startTunnel(port)
-                }
-
                 _role.value = AppRole.HOST
                 _currentScreen.value = AppScreen.HOST_DASHBOARD
                 _statusMessage.value = "Server running on port $port"
@@ -336,7 +337,7 @@ class AppViewModel(private val scope: CoroutineScope) {
                 // Save state for persistence (preserve user settings — includes savedHostCode)
                 AppStateManager.save(AppState(
                     role = "HOST",
-                    hostConfig = HostConfig(port = port, hostCode = code, enableNgrok = enableNgrok),
+                    hostConfig = HostConfig(port = port, hostCode = code),
                     userSettings = AppStateManager.loadUserSettings()
                 ))
 
@@ -376,38 +377,24 @@ class AppViewModel(private val scope: CoroutineScope) {
         }
     }
 
-    fun startTunnel(port: Int) {
-        val tunnel = NgrokTunnel()
-        ngrokTunnel = tunnel
-        scope.launch {
-            tunnel.state.collect { _tunnelState.value = it }
-        }
-        scope.launch {
-            tunnel.publicUrl.collect { _tunnelUrl.value = it }
-        }
-        scope.launch {
-            tunnel.errorMessage.collect { _tunnelError.value = it }
-        }
-        tunnel.start(port, scope)
-    }
-
-    fun stopTunnel() {
-        ngrokTunnel?.stop()
-        ngrokTunnel = null
-        _tunnelState.value = TunnelState.STOPPED
-        _tunnelUrl.value = null
-        _tunnelError.value = null
+    private fun refreshTailscale(port: Int = hostPortValue) {
+        val status = Tailscale.status()
+        _tailscaleStatus.value = status
+        _tailscaleUrl.value = status.reachableName
+            ?.takeIf { status.installed && status.running }
+            ?.let { "http://$it:$port" }
     }
 
     fun stopHost() {
-        stopTunnel()
         closeLogViewer()
+        imageTransferServer.stop()
         hostContainerMonitor?.stop()
         hostContainerMonitor = null
         localCommandExecutor = null
         localDeployer = null
         localContainerService = null
         localLogStreamer = null
+        localDockerClient = null
         dashboardAggregator = null
         hostCodeManagerRef = null
         hostNodeId = null
@@ -458,21 +445,18 @@ class AppViewModel(private val scope: CoroutineScope) {
 
     /**
      * Build a single-line connection token that encodes host address + port + code.
-     * If ngrok tunnel is active, uses the tunnel URL; otherwise falls back to the
+     * If Tailscale is active, uses the MagicDNS name; otherwise falls back to the
      * primary non-loopback IPv4 address of this machine.
      * Returns null when the host isn't running.
      */
     fun buildConnectionToken(): String? {
         if (_role.value != AppRole.HOST) return null
         val code = _hostCode.value.ifBlank { return null }
-        val tunnel = _tunnelUrl.value
-        val (host, port) = if (!tunnel.isNullOrBlank() && _tunnelState.value == TunnelState.RUNNING) {
-            val stripped = tunnel.removePrefix("https://").removePrefix("http://").removeSuffix("/")
-            // ngrok HTTPS tunnels always target port 443
-            stripped to 443
-        } else {
-            val addr = detectPrimaryLanAddress()
-            addr to hostPortValue
+        refreshTailscale()
+        val (host, port) = _tailscaleStatus.value?.reachableName
+            ?.takeIf { _tailscaleStatus.value?.running == true }
+            ?.let { it to hostPortValue } ?: run {
+            detectPrimaryLanAddress() to hostPortValue
         }
         val token = com.orchestrator.common.util.ConnectionToken.encode(host, port, code)
         val activeInMgr = hostCodeManagerRef?.getActiveCode()
@@ -627,7 +611,9 @@ class AppViewModel(private val scope: CoroutineScope) {
                         hostName = if (name.isNotBlank()) name else (try { InetAddress.getLocalHost().hostName } catch (_: Exception) { "unknown" }),
                         os = System.getProperty("os.name", "unknown"),
                         dockerVersion = "",
-                        containers = containers
+                        containers = containers,
+                        tailscaleName = _tailscaleStatus.value?.reachableName,
+                        tailscaleIp = _tailscaleStatus.value?.ipv4
                     )
                     hostConnection?.send(WsMessage.JoinRequest(
                         hostCode = AppStateManager.load().clientConfig?.hostCode ?: "",
@@ -730,7 +716,10 @@ class AppViewModel(private val scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             try {
                 _statusMessage.value = "Connecting to Docker..."
+                val tailscale = Tailscale.status()
+                _tailscaleStatus.value = tailscale
                 val dockerClient = DockerClientFactory.create()
+                localDockerClient = dockerClient
                 val containerService = ContainerService(dockerClient)
                 localContainerService = containerService
                 val commandExecutor = ContainerCommandExecutor(dockerClient)
@@ -750,7 +739,9 @@ class AppViewModel(private val scope: CoroutineScope) {
                     nodeId = nodeId, hostName = clientHostName,
                     os = System.getProperty("os.name", "unknown"),
                     dockerVersion = containerService.getDockerVersion(),
-                    containers = containerService.listContainers()
+                    containers = containerService.listContainers(),
+                    tailscaleName = tailscale.reachableName,
+                    tailscaleIp = tailscale.ipv4
                 )
 
                 lateinit var connection: HostConnection
@@ -869,10 +860,11 @@ class AppViewModel(private val scope: CoroutineScope) {
     fun sendDeployCommand(targetNodeIds: List<String>, config: DeployConfig, mode: DeployMode) {
         scope.launch {
             for (targetNodeId in targetNodeIds) {
+                val configForTarget = prepareImageTransfer(targetNodeId, config)
                 val command = WsMessage.DeployCommand(
                     commandId = UUID.randomUUID().toString().take(8),
                     targetNodeId = targetNodeId,
-                    config = config,
+                    config = configForTarget,
                     deployMode = mode
                 )
                 val sent = if (_role.value == AppRole.HOST) {
@@ -884,11 +876,36 @@ class AppViewModel(private val scope: CoroutineScope) {
                 }
                 _statusMessage.value = if (sent) {
                     val modeLabel = if (mode == DeployMode.INSTANT) "Instant" else "Approval"
-                    "$modeLabel deploy sent: ${config.image}"
+                    "$modeLabel deploy sent: ${configForTarget.image}"
                 } else {
                     "Failed to send deploy to node $targetNodeId"
                 }
             }
+        }
+    }
+
+    private suspend fun prepareImageTransfer(targetNodeId: String, config: DeployConfig): DeployConfig = withContext(Dispatchers.IO) {
+        val docker = localDockerClient ?: return@withContext config
+        val sourceStatus = Tailscale.status()
+        if (!sourceStatus.running) return@withContext config
+        val target = (_connectedNodes.value[targetNodeId] ?: _remoteNodes.value[targetNodeId]) ?: return@withContext config
+        val targetName = target.tailscaleName ?: target.tailscaleIp ?: return@withContext config
+        val sourceName = sourceStatus.reachableName ?: sourceStatus.ipv4 ?: return@withContext config
+
+        runCatching {
+            _statusMessage.value = "Preparing image transfer: ${config.image}"
+            val transferDir = java.io.File(System.getProperty("user.home"), ".docker-orchestrator/transfers").apply { mkdirs() }
+            val fileName = "dro-${config.image.hashCode().toUInt().toString(16)}-${System.currentTimeMillis()}.tar"
+            val tarFile = java.io.File(transferDir, fileName)
+            docker.saveImageCmd(config.image).exec().use { input ->
+                tarFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            val taildropSent = Tailscale.copyFileToTaildrop(tarFile, targetName)
+            val url = imageTransferServer.publish(tarFile, sourceName)
+            config.copy(imageTransfer = ImageTransfer(fileName = fileName, image = config.image, url = url, taildrop = taildropSent))
+        }.getOrElse { e ->
+            logger.warn("Image transfer preparation failed for ${config.image}: ${e.message}")
+            config
         }
     }
 
@@ -905,11 +922,57 @@ class AppViewModel(private val scope: CoroutineScope) {
         containerMonitor?.stop()
         hostConnection?.close()
         hostConnection = null; containerMonitor = null; clientHandler = null
-        localCommandExecutor = null; localContainerService = null; localLogStreamer = null; clientNodeId = null
+        localCommandExecutor = null; localContainerService = null; localLogStreamer = null; localDockerClient = null; clientNodeId = null
         _pendingDeploys.value = emptyList(); _activeDeployNotification.value = null
         _role.value = AppRole.NONE; _connectionState.value = ConnectionState.DISCONNECTED
         _localContainers.value = emptyList(); _remoteNodes.value = emptyMap()
         _currentScreen.value = AppScreen.HOME; _statusMessage.value = "Disconnected"
         AppStateManager.clear()
+    }
+}
+
+private class ImageTransferServer {
+    private val files = ConcurrentHashMap<String, java.io.File>()
+    private var server: HttpServer? = null
+    private var port: Int = 0
+
+    @Synchronized
+    fun publish(file: java.io.File, host: String): String {
+        ensureStarted()
+        val token = UUID.randomUUID().toString()
+        files[token] = file
+        return "http://${host.trimEnd('.')}:$port/images/$token/${file.name}"
+    }
+
+    @Synchronized
+    fun stop() {
+        server?.stop(0)
+        server = null
+        files.clear()
+        port = 0
+    }
+
+    private fun ensureStarted() {
+        if (server != null) return
+        val newServer = HttpServer.create(InetSocketAddress("0.0.0.0", 0), 0)
+        newServer.createContext("/images") { exchange ->
+            val token = exchange.requestURI.path.split("/").getOrNull(2)
+            val file = token?.let { files[it] }
+            if (file == null || !file.exists()) {
+                exchange.sendResponseHeaders(404, -1)
+                exchange.close()
+                return@createContext
+            }
+            exchange.responseHeaders.add("Content-Type", "application/x-tar")
+            exchange.responseHeaders.add("Content-Disposition", "attachment; filename=\"${file.name}\"")
+            exchange.sendResponseHeaders(200, file.length())
+            file.inputStream().use { input ->
+                exchange.responseBody.use { output -> input.copyTo(output) }
+            }
+        }
+        newServer.executor = java.util.concurrent.Executors.newCachedThreadPool()
+        newServer.start()
+        server = newServer
+        port = newServer.address.port
     }
 }

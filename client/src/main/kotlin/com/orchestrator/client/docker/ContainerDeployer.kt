@@ -3,11 +3,15 @@ package com.orchestrator.client.docker
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.orchestrator.common.model.DeployConfig
+import com.orchestrator.common.model.ImageTransfer
+import com.orchestrator.common.network.Tailscale
 import com.orchestrator.common.protocol.DeployPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.net.URI
+import java.nio.file.Files
 
 class ContainerDeployer(private val dockerClient: DockerClient) {
 
@@ -19,26 +23,32 @@ class ContainerDeployer(private val dockerClient: DockerClient) {
         onProgress: suspend (DeployPhase, String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            // 1. Pull image (with registry auth if available)
-            onProgress(DeployPhase.PULLING, "Pulling ${config.image}...")
-            logger.info("[$commandId] Pulling image: ${config.image}")
-            try {
-                val pullCmd = dockerClient.pullImageCmd(config.image)
-                val authConfig = resolveAuthConfig(config.image)
-                if (authConfig != null) {
-                    pullCmd.withAuthConfig(authConfig)
-                    logger.info("[$commandId] Using auth for registry: ${authConfig.registryAddress}")
-                }
-                pullCmd.start().awaitCompletion()
-                logger.info("[$commandId] Image pulled: ${config.image}")
-            } catch (pullError: Exception) {
-                // Check if image exists locally — if so, continue with local image
-                val localImages = dockerClient.listImagesCmd().withImageNameFilter(config.image).exec()
-                if (localImages.isNotEmpty()) {
-                    logger.warn("[$commandId] Pull failed but image exists locally, continuing: ${pullError.message}")
-                    onProgress(DeployPhase.PULLING, "Using local image (pull failed)")
-                } else {
-                    throw pullError
+            val loadedFromTransfer = config.imageTransfer?.let { transfer ->
+                loadTransferredImage(commandId, transfer, onProgress)
+            } == true
+
+            if (!loadedFromTransfer) {
+                // 1. Pull image (with registry auth if available)
+                onProgress(DeployPhase.PULLING, "Pulling ${config.image}...")
+                logger.info("[$commandId] Pulling image: ${config.image}")
+                try {
+                    val pullCmd = dockerClient.pullImageCmd(config.image)
+                    val authConfig = resolveAuthConfig(config.image)
+                    if (authConfig != null) {
+                        pullCmd.withAuthConfig(authConfig)
+                        logger.info("[$commandId] Using auth for registry: ${authConfig.registryAddress}")
+                    }
+                    pullCmd.start().awaitCompletion()
+                    logger.info("[$commandId] Image pulled: ${config.image}")
+                } catch (pullError: Exception) {
+                    // Check if image exists locally — if so, continue with local image
+                    val localImages = dockerClient.listImagesCmd().withImageNameFilter(config.image).exec()
+                    if (localImages.isNotEmpty()) {
+                        logger.warn("[$commandId] Pull failed but image exists locally, continuing: ${pullError.message}")
+                        onProgress(DeployPhase.PULLING, "Using local image (pull failed)")
+                    } else {
+                        throw pullError
+                    }
                 }
             }
 
@@ -88,6 +98,41 @@ class ContainerDeployer(private val dockerClient: DockerClient) {
             logger.error("[$commandId] Deploy failed", e)
             onProgress(DeployPhase.FAILED, e.message ?: "Unknown error")
             Result.failure(e)
+        }
+    }
+
+    private suspend fun loadTransferredImage(
+        commandId: String,
+        transfer: ImageTransfer,
+        onProgress: suspend (DeployPhase, String) -> Unit
+    ): Boolean {
+        val tempDir = Files.createTempDirectory("dro-image-in-").toFile()
+        return try {
+            val tarFile = File(tempDir, transfer.fileName)
+            if (transfer.taildrop) {
+                onProgress(DeployPhase.PULLING, "Receiving image via Taildrop...")
+                Tailscale.receiveTaildropFiles(tempDir, timeoutSeconds = 90)
+            }
+            if (!tarFile.exists() && transfer.url != null) {
+                onProgress(DeployPhase.PULLING, "Downloading image from source node...")
+                URI(transfer.url).toURL().openStream().use { input ->
+                    tarFile.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            if (!tarFile.exists()) return false
+
+            onProgress(DeployPhase.PULLING, "Loading transferred image...")
+            logger.info("[$commandId] Loading image tar: ${tarFile.absolutePath}")
+            tarFile.inputStream().use { input ->
+                dockerClient.loadImageCmd(input).exec()
+            }
+            logger.info("[$commandId] Image loaded from transfer: ${transfer.image}")
+            true
+        } catch (e: Exception) {
+            logger.warn("[$commandId] Failed to load transferred image, falling back to pull: ${e.message}")
+            false
+        } finally {
+            tempDir.deleteRecursively()
         }
     }
 

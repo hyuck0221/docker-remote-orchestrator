@@ -26,8 +26,7 @@ data class UserSettings(
 data class HostConfig(
     val port: Int = 9090,
     val hostCode: String = "",
-    val enableTls: Boolean = false,
-    val enableNgrok: Boolean = false
+    val enableTls: Boolean = false
 )
 
 @Serializable

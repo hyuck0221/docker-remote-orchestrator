@@ -2,7 +2,6 @@ package com.orchestrator.client.network
 
 import com.orchestrator.common.protocol.WsMessage
 import com.orchestrator.common.security.TlsCertificateGenerator
-import com.orchestrator.common.tunnel.NgrokTunnel
 import com.orchestrator.common.util.AppJson
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -59,27 +58,15 @@ class HostConnection(
         connectionJob = scope.launch {
             var backoff = initialBackoffMs
 
-            // Auto-detect ngrok URLs and use TLS
-            val isNgrok = NgrokTunnel.isNgrokUrl(host)
-            val actualHost: String
-            val actualPort: Int
-            val actualTls: Boolean
-
-            if (isNgrok) {
-                val (h, p, tls) = NgrokTunnel.parseUrl(host)
-                actualHost = h
-                actualPort = p
-                actualTls = tls
-            } else {
-                actualHost = host
-                actualPort = port
-                actualTls = useTls
-            }
+            val parsed = parseEndpoint(host, port, useTls)
+            val actualHost = parsed.host
+            val actualPort = parsed.port
+            val actualTls = parsed.tls
 
             val scheme = if (actualTls) "wss" else "ws"
-            logger.info("Connecting via $scheme to $actualHost:$actualPort${if (isNgrok) " (ngrok)" else ""}")
+            logger.info("Connecting via $scheme to $actualHost:$actualPort")
 
-            // Create a TLS-capable client if needed (ngrok requires wss)
+            // Create a TLS-capable client if needed.
             val client = if (actualTls && !useTls) {
                 HttpClient(CIO) {
                     install(WebSockets) {
@@ -151,12 +138,7 @@ class HostConnection(
                     }
 
                     if (actualTls) {
-                        client.wss(host = actualHost, port = actualPort, path = "/ws/node", request = {
-                            if (isNgrok) {
-                                headers.append("ngrok-skip-browser-warning", "true")
-                                headers.append("User-Agent", "DRO-Client")
-                            }
-                        }, block = block)
+                        client.wss(host = actualHost, port = actualPort, path = "/ws/node", block = block)
                     } else {
                         client.webSocket(host = actualHost, port = actualPort, path = "/ws/node", block = block)
                     }
@@ -217,5 +199,18 @@ class HostConnection(
     fun close() {
         disconnect()
         httpClient.close()
+    }
+
+    private data class Endpoint(val host: String, val port: Int, val tls: Boolean)
+
+    private fun parseEndpoint(host: String, port: Int, defaultTls: Boolean): Endpoint {
+        val trimmed = host.trim().trimEnd('/')
+        return when {
+            trimmed.startsWith("wss://") -> Endpoint(trimmed.removePrefix("wss://"), 443, true)
+            trimmed.startsWith("https://") -> Endpoint(trimmed.removePrefix("https://"), 443, true)
+            trimmed.startsWith("ws://") -> Endpoint(trimmed.removePrefix("ws://"), port, false)
+            trimmed.startsWith("http://") -> Endpoint(trimmed.removePrefix("http://"), port, false)
+            else -> Endpoint(trimmed, port, defaultTls)
+        }
     }
 }
